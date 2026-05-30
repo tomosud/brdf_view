@@ -14,6 +14,16 @@ build/brdf-runtime/brdf.exe
 
 短時間の起動確認では、PATH を追加しない状態で `build/brdf-runtime` を working directory にして起動し、5 秒後もプロセスが生存していた。
 
+配布用 zip も作成済み。
+
+```text
+dist/brdf-runtime.zip
+```
+
+zip サイズは約 35.4 MB。Git repo には入れず、GitHub Releases の asset として添付した。Release title は `BRDF Explorer Runtime v0.1.0`。この zip が Web 版の見た目・挙動比較に使うデスクトップ版基準になる。
+
+`build/`, `dist/`, `sample/brdf-main` は `.gitignore` 対象。生成物と元サンプルソースを通常の履歴へ混ぜない方針。
+
 ## 同梱状況
 
 `sample/brdf-main` には exe は同梱されていない。旧 `brdf-1.0.0-win32.zip` は過去に GitHub Downloads で配布されていた記録があるが、現在の URL は 404 で、GitHub releases/tags にも配布物はない。

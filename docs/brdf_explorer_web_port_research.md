@@ -38,7 +38,7 @@ GitHub Pages でのホストは可能。サーバ側処理は不要で、HTML/CS
 - Qt/qmake + MSVC または MinGW を導入してこのソースをビルドする
 - 旧 `brdf-1.0.0-win32.zip` の信頼できるミラー/アーカイブを入手する
 
-その後、比較対象用の Windows exe はローカルで作成済み。MSYS2 UCRT64 + MinGW + Qt5 でソース修正なしにビルドし、直接起動しやすい runtime フォルダとして `build/brdf-runtime/brdf.exe` を用意した。詳細手順は `docs/windows_exe_build.md` にまとめた。
+その後、比較対象用の Windows exe はローカルで作成済み。MSYS2 UCRT64 + MinGW + Qt5 でソース修正なしにビルドし、直接起動しやすい runtime フォルダとして `build/brdf-runtime/brdf.exe` を用意した。配布用には `dist/brdf-runtime.zip` を作成し、GitHub Releases の `BRDF Explorer Runtime v0.1.0` に asset として添付した。詳細手順は `docs/windows_exe_build.md` にまとめた。
 
 追加調査では、旧バイナリを安全に直接取得できる現役 URL は見つからなかった。見つかったのは次の「存在証跡」まで。
 
@@ -47,7 +47,7 @@ GitHub Pages でのホストは可能。サーバ側処理は不要で、HTML/CS
 - Disney 公式ページのミラー: source code または win32 binary を GitHub から取得できる、と説明している
 - CG Channel の 2012 年記事: バイナリは 32-bit Windows only と説明している
 
-一方で、旧 GitHub Downloads URL は現在 404 で、GitHub releases/tags も空。したがって、今から比較用バイナリを使う場合は、非公式ミラーを無理に探して実行するより、ソースから再現ビルドした今回の `build/brdf-runtime/brdf.exe` を基準にする方が安全。
+一方で、旧 GitHub Downloads URL は現在 404 で、元 upstream の GitHub releases/tags も空。したがって、今から比較用バイナリを使う場合は、非公式ミラーを無理に探して実行するより、ソースから再現ビルドした今回の `build/brdf-runtime/brdf.exe` / Release asset `brdf-runtime.zip` を基準にする方が安全。
 
 Guix には `brdf-explorer` パッケージが存在する。これは Linux 環境での再現ビルドや依存関係の把握には参考になるが、GitHub Pages で動く Web アプリのベースや Windows exe の代替にはならない。
 
