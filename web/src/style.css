@@ -31,10 +31,22 @@ html, body {
 }
 
 #sidebar h1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
   font-size: 15px;
   margin: 4px 0 12px;
 }
 #sidebar h1 small { color: var(--muted); font-weight: 400; }
+.title-link {
+  color: #8dbdff;
+  font-size: 11px;
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.title-link:hover { color: #b8d5ff; }
 
 #toolbar {
   display: flex;
