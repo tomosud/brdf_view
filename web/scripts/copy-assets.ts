@@ -51,13 +51,15 @@ function copyFiles(fromDir: string, toDir: string, names: string[]): number {
   return n;
 }
 
-if (!existsSync(srcRoot)) {
-  console.warn(`[copy-assets] source tree not found at ${srcRoot}; using committed public/ assets.`);
-  process.exit(0);
-}
+let brdfs = 0;
+let licenses = 0;
 
-const brdfs = copyByExt(join(srcRoot, 'src', 'brdfs'), join(publicRoot, 'brdfs'), ['.brdf']);
-const licenses = copyFiles(srcRoot, publicRoot, ['LICENSE', 'LICENSE-BINARY', 'README']);
+if (existsSync(srcRoot)) {
+  brdfs = copyByExt(join(srcRoot, 'src', 'brdfs'), join(publicRoot, 'brdfs'), ['.brdf']);
+  licenses = copyFiles(srcRoot, publicRoot, ['LICENSE', 'LICENSE-BINARY', 'README']);
+} else {
+  console.warn(`[copy-assets] source tree not found at ${srcRoot}; using committed public/ assets.`);
+}
 
 // Large measured-BRDF samples and the default IBL environment live outside the
 // original source tree (sample/brdf, assets/). These are gitignored under
