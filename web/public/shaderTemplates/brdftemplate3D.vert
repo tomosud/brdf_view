@@ -23,7 +23,7 @@ out vec4 eyeSpaceVert;
 float modifyLog( float x )
 {
     // log base 10
-    return log(x + 1.0) * 0.434294482;
+    return log(max(x, 0.0) + 1.0) * 0.434294482;
 }
 
 
@@ -42,7 +42,8 @@ void main(void)
     // calculate the radial value of the BRDF at this output vector
     vec3 bRes = BRDF( normalizedIncidentVector, normalizedInPos, normal, tangent, bitangent );
     float b = dot( bRes, colorMask );
-    b *= (useNDotL > 0.5 ? dot( normal, normalizedIncidentVector ) : 1.0);
+    b *= (useNDotL > 0.5 ? max(dot( normal, normalizedIncidentVector ), 0.0) : 1.0);
+    b = max(b, 0.0);
     float radius = useLogPlot > 0.5 ? modifyLog( b ) : b;
 
     // now displace the vertex by that much

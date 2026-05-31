@@ -26,7 +26,7 @@ const int SEGMENTS = 512;
 const float TMIN = -1.57079633;
 const float TMAX = 1.57079633;
 
-float modifyLog( float x ) { return log(x + 1.0) * 0.434294482; }
+float modifyLog( float x ) { return log(max(x, 0.0) + 1.0) * 0.434294482; }
 
 // model-space curve point (theta, brdfValue) at sample idx (0..SEGMENTS)
 vec2 curvePoint(int idx)
@@ -45,7 +45,8 @@ vec2 curvePoint(int idx)
 
     vec3 bRes = BRDF( nIV, V, N, X, Y );
     float b = dot( bRes, colorMask );
-    b *= (useNDotL > 0.5 ? dot( N, nIV ) : 1.0);
+    b *= (useNDotL > 0.5 ? max(dot( N, nIV ), 0.0) : 1.0);
+    b = max(b, 0.0);
     float radius = useLogPlot > 0.5 ? modifyLog( b ) : b;
     return vec2(t, radius);
 }

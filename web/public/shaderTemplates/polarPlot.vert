@@ -22,7 +22,7 @@ uniform float thickness;
 const int SEGMENTS = 360;
 const float INC = 3.14159265 / 360.0;
 
-float modifyLog( float x ) { return log(x + 1.0) * 0.434294482; }
+float modifyLog( float x ) { return log(max(x, 0.0) + 1.0) * 0.434294482; }
 
 // world-space curve point at sample idx (0..SEGMENTS)
 vec2 curvePoint(int idx)
@@ -42,7 +42,8 @@ vec2 curvePoint(int idx)
 
     vec3 bRes = BRDF( nIV, viewingVector, normal, tangent, bitangent );
     float b = dot( bRes, colorMask );
-    b *= (useNDotL > 0.5 ? dot( normal, nIV ) : 1.0);
+    b *= (useNDotL > 0.5 ? max(dot( normal, nIV ), 0.0) : 1.0);
+    b = max(b, 0.0);
     float radius = useLogPlot > 0.5 ? modifyLog( b ) : b;
     return dir * radius;
 }
