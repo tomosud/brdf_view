@@ -1,0 +1,124 @@
+:root {
+  --bg: #1b1b1b;
+  --panel: #262626;
+  --line: #3a3a3a;
+  --text: #e6e6e6;
+  --muted: #9a9a9a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 system-ui, sans-serif;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  height: 100vh;
+}
+
+#sidebar {
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  padding: 8px 10px;
+  background: var(--panel);
+}
+
+#sidebar h1 {
+  font-size: 15px;
+  margin: 4px 0 12px;
+}
+#sidebar h1 small { color: var(--muted); font-weight: 400; }
+
+#views {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 8px;
+  padding: 8px;
+  overflow: auto;
+}
+
+.view {
+  display: flex;
+  flex-direction: column;
+  min-height: 360px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.view h2 {
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: #2e2e2e;
+  color: var(--muted);
+}
+.view canvas {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: block;
+}
+.view-controls {
+  flex: none;
+  padding: 4px 8px;
+  background: #242424;
+  border-top: 1px solid var(--line);
+}
+.view-controls:empty { display: none; }
+.view-controls .ctl-row { grid-template-columns: 80px 1fr; margin: 2px 0; }
+
+.panel-section {
+  border-top: 1px solid var(--line);
+  padding: 8px 0;
+}
+.panel-section h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ctl-row {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0;
+}
+.ctl-label { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.ctl-float { display: grid; grid-template-columns: 1fr 56px; gap: 4px; }
+.ctl-float input[type='range'] { width: 100%; }
+.ctl-float input[type='number'] { width: 100%; }
+
+#shader-log {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px;
+  background: #3a1f1f;
+  color: #ffb4b4;
+  white-space: pre-wrap;
+  font: 12px/1.4 ui-monospace, monospace;
+  border-radius: 6px;
+}
+
+#fatal[hidden] { display: none; }
+#fatal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  padding: 24px;
+  background: #2a1414;
+  color: #ffb4b4;
+  font-size: 15px;
+  text-align: center;
+  z-index: 10;
+}

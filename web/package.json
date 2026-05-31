@@ -1,0 +1,21 @@
+{
+  "name": "brdf-explorer-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WebGL2 port of the Disney BRDF Explorer (analytic core milestone).",
+  "type": "module",
+  "scripts": {
+    "copy-assets": "tsx scripts/copy-assets.ts",
+    "predev": "npm run copy-assets",
+    "dev": "vite",
+    "prebuild": "npm run copy-assets",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}
