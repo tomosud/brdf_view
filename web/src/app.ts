@@ -43,28 +43,29 @@ async function main(): Promise<void> {
   mountParameterPanel(document.getElementById('parameter-panel')!, store);
 
   const views = document.getElementById('views')!;
+  const viewRows = mountViewRows(views);
   const log = document.createElement('pre');
   log.id = 'shader-log';
   log.setAttribute('hidden', '');
   views.append(log);
 
-  new Plot3DView(views, store);
-  new PlotPolarView(views, store);
-  new PlotCartesianView(views, store);
-  new LitSphereView(views, store);
-  new ImageSliceView(views, store);
+  new Plot3DView(viewRows.top, store);
+  new PlotPolarView(viewRows.top, store);
+  new PlotCartesianView(viewRows.top, store);
+  new ImageSliceView(viewRows.bottom, store);
 
   // Lit Object (IBL) — needs the equirect HDRI environment.
   try {
     const res = await fetch(`${import.meta.env.BASE_URL}environments/ibl.hdr`);
     if (res.ok) {
-      new LitObjectView(views, store, parseHdr(await res.arrayBuffer()));
+      new LitObjectView(viewRows.bottom, store, parseHdr(await res.arrayBuffer()));
     } else {
       console.warn('IBL environment not found; Lit Object view skipped.');
     }
   } catch (e) {
     console.error('IBL environment load failed', e);
   }
+  new LitSphereView(viewRows.bottom, store);
 
   wireFileLoading(store, views);
 
@@ -78,6 +79,38 @@ async function main(): Promise<void> {
       console.error(e);
     }
   }
+}
+
+function mountViewRows(views: HTMLElement): { top: HTMLElement; bottom: HTMLElement } {
+  const top = document.createElement('div');
+  top.className = 'view-row';
+  const splitter = document.createElement('div');
+  splitter.id = 'row-resizer';
+  splitter.setAttribute('role', 'separator');
+  splitter.setAttribute('aria-orientation', 'horizontal');
+  splitter.title = 'Resize view rows';
+  const bottom = document.createElement('div');
+  bottom.className = 'view-row';
+  views.append(top, splitter, bottom);
+
+  splitter.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    splitter.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      const rect = views.getBoundingClientRect();
+      const ratio = Math.max(0.25, Math.min(0.78, (ev.clientY - rect.top) / rect.height));
+      views.style.setProperty('--top-row-size', `${ratio * 100}%`);
+    };
+    const up = (ev: PointerEvent) => {
+      splitter.releasePointerCapture(ev.pointerId);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+
+  return { top, bottom };
 }
 
 function wireFileLoading(store: Store, dropTarget: HTMLElement): void {

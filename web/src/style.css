@@ -58,16 +58,32 @@ html, body {
 
 #views {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-rows: minmax(180px, var(--top-row-size, 54%)) 8px minmax(180px, 1fr);
   gap: 8px;
   padding: 8px;
-  overflow: auto;
+  overflow: hidden;
+  min-height: 0;
+}
+.view-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+  min-height: 0;
+}
+#row-resizer {
+  cursor: row-resize;
+  border-radius: 4px;
+  background: linear-gradient(90deg, transparent, #4a4a4a 25%, #4a4a4a 75%, transparent);
+}
+#row-resizer:hover,
+#row-resizer:active {
+  background: linear-gradient(90deg, transparent, #6aa9ff 25%, #6aa9ff 75%, transparent);
 }
 
 .view {
   display: flex;
   flex-direction: column;
-  min-height: 360px;
+  min-height: 0;
   border: 1px solid var(--line);
   border-radius: 6px;
   overflow: hidden;
@@ -93,6 +109,10 @@ html, body {
 }
 .view-controls:empty { display: none; }
 .view-controls .ctl-row { grid-template-columns: 80px 1fr; margin: 2px 0; }
+.ctl-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
 
 .panel-section {
   border-top: 1px solid var(--line);

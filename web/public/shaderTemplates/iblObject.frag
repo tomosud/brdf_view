@@ -17,6 +17,7 @@ uniform float useNDotL;
 uniform float renderWithIBL;
 uniform float envIntensity;
 uniform int numSamples;
+uniform int frameIndex;
 
 in vec3 wNormal;
 in vec3 wPos;
@@ -76,9 +77,11 @@ void main(void)
     if (renderWithIBL > 0.5) {
         // Cranley-Patterson rotation per pixel to decorrelate the sequence.
         vec2 jitter = vec2(hash(gl_FragCoord.xy), hash(gl_FragCoord.yx + 7.0));
+        int sampleOffset = frameIndex * numSamples;
         for (int i = 0; i < numSamples; i++) {
-            float u1 = fract(float(i) / float(numSamples) + jitter.x);
-            float u2 = fract(radicalInverse(uint(i)) + jitter.y);
+            int sampleIndex = sampleOffset + i;
+            float u1 = fract(float(sampleIndex) * 0.6180339887498949 + jitter.x);
+            float u2 = fract(radicalInverse(uint(sampleIndex)) + jitter.y);
             // cosine-weighted hemisphere sample (local space, +Z = normal)
             float r = sqrt(u1);
             float phi = 2.0 * kPI * u2;
