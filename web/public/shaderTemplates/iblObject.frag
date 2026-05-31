@@ -1,10 +1,12 @@
 #version 300 es
 // Lit Object (IBL) shading. Two render modes:
 //   renderWithIBL == 0  -> single directional light from incidentVector (No IBL)
-//   renderWithIBL == 1  -> cosine-weighted Monte-Carlo over the equirect env
-//                          (estimator: BRDF * env * cos / pdf, pdf = cos/kPI).
+//   renderWithIBL == 1  -> mixed Monte-Carlo over the equirect env. The sampler
+//                          combines cosine hemisphere samples with two glossy
+//                          lobes around the mirror direction, and evaluates with
+//                          the mixture pdf: BRDF * env * cos / pdf.
 // The injected analytic/measured BRDF is evaluated per sample. Importance
-// sampling (IBL IS / BRDF IS / MIS) via env CDF textures is future work.
+// sampling via env CDF textures is future work.
 precision highp float;
 precision highp int;
 
@@ -63,6 +65,33 @@ void buildTBN(vec3 N, out vec3 T, out vec3 B)
     B = cross(N, T);
 }
 
+vec3 cosineSample(vec3 axis, float u1, float u2)
+{
+    vec3 T, B;
+    buildTBN(axis, T, B);
+    float r = sqrt(u1);
+    float phi = 2.0 * kPI * u2;
+    vec3 local = vec3(r * cos(phi), r * sin(phi), sqrt(max(0.0, 1.0 - u1)));
+    return normalize(local.x * T + local.y * B + local.z * axis);
+}
+
+vec3 powerCosineSample(vec3 axis, float exponent, float u1, float u2)
+{
+    vec3 T, B;
+    buildTBN(axis, T, B);
+    float cosTheta = pow(max(0.0, 1.0 - u1), 1.0 / (exponent + 1.0));
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+    float phi = 2.0 * kPI * u2;
+    vec3 local = vec3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
+    return normalize(local.x * T + local.y * B + local.z * axis);
+}
+
+float powerCosinePdf(float cosTheta, float exponent)
+{
+    if (cosTheta <= 0.0) return 0.0;
+    return (exponent + 1.0) * pow(cosTheta, exponent) / (2.0 * kPI);
+}
+
 void main(void)
 {
     vec3 N = normalize(wNormal);
@@ -76,19 +105,35 @@ void main(void)
         // Cranley-Patterson rotation per pixel to decorrelate the sequence.
         vec2 jitter = vec2(hash(gl_FragCoord.xy), hash(gl_FragCoord.yx + 7.0));
         int sampleOffset = frameIndex * numSamples;
+        vec3 R = normalize(reflect(-V, N));
+        const float mediumGlossExponent = 96.0;
+        const float sharpGlossExponent = 2048.0;
         for (int i = 0; i < numSamples; i++) {
             int sampleIndex = sampleOffset + i;
-            float u1 = fract(float(sampleIndex) * 0.6180339887498949 + jitter.x);
-            float u2 = fract(radicalInverse(uint(sampleIndex)) + jitter.y);
-            // cosine-weighted hemisphere sample (local space, +Z = normal)
-            float r = sqrt(u1);
-            float phi = 2.0 * kPI * u2;
-            vec3 local = vec3(r * cos(phi), r * sin(phi), sqrt(max(0.0, 1.0 - u1)));
-            vec3 L = normalize(local.x * X + local.y * Y + local.z * N);
+            int component = sampleIndex - (sampleIndex / 3) * 3;
+            int componentIndex = sampleIndex / 3;
+            float u1 = fract(float(componentIndex) * 0.6180339887498949 + jitter.x);
+            float u2 = fract(radicalInverse(uint(componentIndex)) + jitter.y);
+
+            vec3 L;
+            if (component == 0) {
+                L = cosineSample(N, u1, u2);
+            } else if (component == 1) {
+                L = powerCosineSample(R, mediumGlossExponent, u1, u2);
+            } else {
+                L = powerCosineSample(R, sharpGlossExponent, u1, u2);
+            }
+
+            float nDotL = max(dot(N, L), 0.0);
+            float cosinePdf = nDotL / kPI;
+            float mediumPdf = powerCosinePdf(dot(R, L), mediumGlossExponent);
+            float sharpPdf = powerCosinePdf(dot(R, L), sharpGlossExponent);
+            float pdf = (cosinePdf + mediumPdf + sharpPdf) / 3.0;
+            if (nDotL <= 0.0 || pdf <= 0.0) continue;
+
             vec3 env = sampleEnv(L);
             vec3 b = max(BRDF(L, V, N, X, Y), vec3(0.0));
-            // estimator: BRDF * env * cos / (cos/kPI) = BRDF * env * kPI
-            result += b * env * kPI;
+            result += b * env * nDotL / pdf;
         }
         result /= float(numSamples);
     } else {
