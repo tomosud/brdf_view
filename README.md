@@ -1,19 +1,21 @@
 # BRDF Explorer Web
 
 Disney BRDF Explorer の WebGL2 移植実験です。
-https://github.com/wdas/brdf
+- Web app: https://tomosud.github.io/brdf_view/
+
 
 <img width="1713" height="902" alt="image" src="https://github.com/user-attachments/assets/93bab9fe-9346-42b6-ba99-62f5cd9fb04e" />
 
 
-- Web app: https://tomosud.github.io/brdf_view/
-
-
-Disney BRDF Explorer の windows exeは以下（比較用）
-- Windows comparison runtime: https://github.com/tomosud/brdf_view/releases/tag/brdf-runtime-v0.1.0
-
 BRDFファイルは以下から取得して
 https://www.merl.com/research/downloads/BRDF
+
+
+以下を参考にvibeコーディングでweb版を作った
+
+https://github.com/wdas/brdf
+Disney BRDF Explorer の windows exeは以下（比較用）
+- Windows comparison runtime: https://github.com/tomosud/brdf_view/releases/tag/brdf-runtime-v0.1.0
 
 
 大まかにみためはあってそうだけど、保証できない的な内容を。
