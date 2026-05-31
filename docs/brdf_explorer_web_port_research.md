@@ -4,6 +4,8 @@
 
 目的: Disney BRDF Explorer の挙動を、GitHub Pages でホストできる静的 Web アプリとして再現する方法を調査する。ここでは実装は行わず、元アプリの構造、再現すべき挙動、Web 移植時の技術課題、実装方針を整理する。
 
+更新日: 2026-05-31
+
 ## 結論
 
 GitHub Pages でのホストは可能。サーバ側処理は不要で、HTML/CSS/JavaScript/WebAssembly/静的アセットだけで構成できる。
@@ -13,10 +15,12 @@ GitHub Pages でのホストは可能。サーバ側処理は不要で、HTML/CS
 - Geometry Shader: WebGL では使えないため、太線・テキスト・プロット線の展開を WebGL2 の頂点シェーダ/インスタンシング用データ構造へ移す。
 - `samplerBuffer` / `GL_TEXTURE_BUFFER`: WebGL2 には同等 API がないため、MERL/異方性 measured データを 2D float texture に詰め替え、`texelFetch` で 1D index を再現する。
 - GLSL 410: WebGL2 の GLSL ES 3.00 へテンプレートを機械変換し、`in/out`, precision, texture format, integer loop などを合わせる。
-- Ptex probe: ブラウザに Ptex デコーダはないため、同梱 `src/brdf/ptex` を WASM 化するか、ビルド時に cube strip + sampling texture へ変換する。
+- Environment probe: 元アプリは Ptex `.penv` を読むが、Web 版の主入力は通常 HDRI に寄せる。Radiance RGBE `.hdr` や OpenEXR `.exr` の equirectangular map を読み、cubemap と importance sampling 用 CDF/probability texture を生成する。元同梱 `.penv` は比較用に build-time 変換する方針がよい。
 - Qt dock UI: 同等のビュー構成と相互作用を Web UI と複数 canvas で再構成する。
 
 最も現実的で再現性が高い方針は「Emscripten で Qt アプリを丸ごと動かす」ではなく、「元の BRDF/シェーダ/データ処理を WebGL2 向けに移植する」こと。理由は、元アプリが OpenGL 4.1 の geometry shader と texture buffer に強く依存しており、Qt for WebAssembly 経由でも WebGL ターゲットでは同じ GL 機能をそのまま出せないため。
+
+2026-05 時点では WebGPU も実装候補に見えるが、初期実装の主ターゲットにはしない。WebGPU は GPU compute や storage buffer が使えるため measured BRDF や IBL accumulation には魅力がある。一方、WebGPU の shader は WGSL であり、元 `.brdf` の任意 GLSL 断片をテンプレートへ差し込む設計と相性が悪い。GLSL 断片を WGSL へ変換するには別の compiler/transpiler 問題が発生するため、まず WebGL2 + GLSL ES 3.00 で元設計を保つ。WebGPU は将来の別 backend として検討する。
 
 ## Windows exe の同梱状況
 
@@ -88,7 +92,7 @@ CMU の `BRDF Toy` や各種 PBR/WebGL demo は見つかるが、Disney BRDF Exp
 
 ### 採用判断
 
-今回の Web 版では、Patapom 版を直接 fork/流用する方針は取らない。理由は `.brdf` 互換、shader template 注入、Ptex probe、Disney 版の複数 plot view が揃っておらず、ライセンスも明確に確認できないため。
+今回の Web 版では、Patapom 版を直接 fork/流用する方針は取らない。理由は `.brdf` 互換、shader template 注入、元 Disney 版の environment/probe 互換、複数 plot view が揃っておらず、ライセンスも明確に確認できないため。
 
 ただし、次の用途では参考にする価値がある。
 
@@ -255,11 +259,16 @@ Web 版:
 Web 版:
 
 - OBJ parser は `SimpleModel` と同じ対応範囲を実装する。`v`, `vn`, `f` の `v//n`, `v/t/n`, `v/t`, `v` を読み、fan triangulation する。
-- Ptex は以下のどちらかが必要。
-  - 正確なユーザファイル対応: 同梱 `src/brdf/ptex` の reader を WASM 化し、`.penv` をブラウザで decode する。
-  - 同梱 probe の高速起動: build tool で `.penv` を cube strip float binary と probability textures に事前変換する。ただし任意 probe 読み込みまで再現するなら WASM reader も必要。
+- IBL の主入力は Ptex `.penv` ではなく、通常 HDRI にする。Ptex は元アプリ互換・比較用の入力形式として扱い、ユーザ向けの標準入力にはしない。
+- 主対応形式は Radiance RGBE `.hdr` equirectangular map がよい。理由は parser が比較的薄く、Web で `ArrayBuffer` から RGBE/RLE を読んで `Float32Array` の linear RGB に展開しやすいこと、HDRI 素材として一般的なこと。
+- OpenEXR `.exr` は追加対応候補。映画/VFX 由来の scene-linear HDR 形式として強いが、parser が重くなるため初期実装では `.hdr` を先に通す。既存 loader を使う場合もライセンスと bundle size を確認する。
+- 配布効率を優先する同梱 environment は、build-time に equirectangular HDRI から cubemap、mip chain、importance sampling texture へ変換して静的 asset 化する。KTX2 は GPU texture container として有力だが、Basis Universal transcode に WASM が必要になる場合があるため、最初は独自の float binary または uncompressed cubemap asset の方がデバッグしやすい。
+- 元同梱 `beach.penv` / `furnace.penv` / `spot.penv` は、Web 版の比較用に build-time converter で cubemap float data と probability textures へ変換する。これなら IBL の見た目比較に必要な environment は保てる。
+- 任意 `.penv` をブラウザ内で開く機能は後回しにする。必要になった場合だけ、同梱 `src/brdf/ptex` reader の WASM 化を検討する。Ptex decode を初期実装の必須経路にすると、Web 移植の主課題が renderer ではなく独自形式 decoder になってしまう。
+- HDRI からの sampling texture 生成は元の `.penv` 経路と同じ意味を保つ。入力が equirectangular の場合は、各 texel の luminance と球面上の面積重みを使って marginal/conditional CDF を作り、shader 側の `IBL: IBL IS` は元と同様に probability texture を参照する。
 - WebGL2 では float render target の extension が必要。`EXT_color_buffer_float` を必須要件として扱い、なければ再現不能として明示エラーにする。
-- `GL_TEXTURE_CUBE_MAP_SEAMLESS` は WebGL にはないため、継ぎ目の差が出る可能性がある。元挙動に近づけるには cube face 境界の sampling と mipmap 設定を検証する必要がある。
+- HDRI cubemap を線形補間するなら `OES_texture_float_linear` も検査する。使えない環境では nearest sampling になり、IBL の見た目差が大きくなるためフォールバック扱いではなく要件不足として止める。
+- WebGL2 は seamless cube map sampling を含むため、旧メモのように `GL_TEXTURE_CUBE_MAP_SEAMLESS` の不在だけを問題視する必要は薄い。ただし、Ptex `.penv` 由来の face 配置や equirectangular -> cubemap 変換時の face 境界、mipmap 生成、probability texture の面積重みがずれると継ぎ目や明るさ差が出る。比較検証では cube face 境界と sampling CDF を重点的に見る。
 
 ## WebGL2 への shader 移植方針
 
@@ -333,18 +342,24 @@ web/
       ibl.ts
     io/
       obj.ts
-      ptex-wasm.ts
+      env-hdri.ts
+      env-cubemap.ts
+      env-sampling.ts
+      penv-convert.ts
   public/
     brdfs/
     shaderTemplates/
     data/
     images/
     probes/
+    environments/
     LICENSE
     NOTICE
 ```
 
 ビルド成果物は `dist/` に出し、GitHub Pages は `dist` を公開する。GitHub Pages は static files を配るだけなので、Vite などで relative base path を設定する。
+
+`probes/` は元 BRDF Explorer の `.penv` 由来 asset を置く場所として残す。Web 版の主環境 map は `environments/` に置き、`.hdr` / `.exr` / 事前変換 cubemap asset を扱う。初期実装では `.hdr` と事前変換 cubemap asset を優先し、任意 `.penv` のブラウザ内 decode は必須にしない。
 
 ## 必須ブラウザ機能
 
@@ -352,15 +367,26 @@ web/
 
 - WebGL2
 - `EXT_color_buffer_float`
+- `OES_texture_float_linear`
 - float texture sampling
 - vertex array object / instancing
+- sufficient `MAX_CUBE_MAP_TEXTURE_SIZE` for HDRI/cubemap probes
 - sufficient `MAX_TEXTURE_SIZE` for measured BRDF 2D packing
 - sufficient fragment shader precision
+- secure context。GitHub Pages は HTTPS 配信なので満たせる。WebGPU を将来 backend にする場合は特に必須になる。
 
 公式参照:
 
 - MDN WebGL2: https://developer.mozilla.org/en-US/docs/Web/API/WebGL2RenderingContext
 - MDN `EXT_color_buffer_float`: https://developer.mozilla.org/en-US/docs/Web/API/EXT_color_buffer_float
+- MDN `OES_texture_float`: https://developer.mozilla.org/en-US/docs/Web/API/OES_texture_float
+- MDN WebGPU: https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API
+- MDN secure contexts: https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts/features_restricted_to_secure_contexts
+- Khronos KTX: https://www.khronos.org/ktx/
+- Khronos WebGL: https://www.khronos.org/webgl/
+- Khronos WebGL 2.0 feature overview: https://www.khronos.org/blog/webgl-2.0-arrives
+- OpenEXR: https://openexr.com/en/latest/
+- Radiance RGBE format reference: https://radsite.lbl.gov/radiance/refer/filefmts.pdf
 - GitHub Pages docs: https://docs.github.com/en/pages
 
 ## ライセンスと配布時の注意
@@ -385,9 +411,10 @@ web/
 7. MERL `.binary` loader と `samplerBuffer` 代替 texture packing を実装する。
 8. Image Slice を移植する。`.tif` は元挙動として固定色を再現し、必要なら別途 TIFF 対応を追加する。
 9. OBJ loader と Lit Object `No IBL` を移植する。
-10. Ptex/WASM または build-time preconvert を用意し、IBL progressive accumulation を移植する。
-11. `.bparam` save/load と local file workflow を実装する。
-12. 元アプリとの比較検証を行う。同じ BRDF、同じ parameter、同じ入射角でスクリーンショット比較を取る。
+10. HDRI environment loader を実装する。まず Radiance RGBE `.hdr` を `Float32Array` に展開し、equirectangular -> cubemap 変換、luminance/solid-angle 重み付き CDF、IBL progressive accumulation を移植する。
+11. 元同梱 `.penv` probe は build-time converter で Web 用 cubemap/probability texture に変換し、比較対象 exe と同じ environment でスクリーンショット比較できるようにする。任意 `.penv` のブラウザ内 decode/WASM は必要になった時点で別工程にする。
+12. `.bparam` save/load と local file workflow を実装する。
+13. 元アプリとの比較検証を行う。同じ BRDF、同じ parameter、同じ入射角、同じ environment でスクリーンショット比較を取る。
 
 ## 検証観点
 
@@ -399,11 +426,15 @@ web/
 - Lit Sphere の入射方向 drag と double theta が一致する。
 - MERL measured BRDF の index mapping と RGB scale が一致する。
 - IBL の `No IBL`, `IBL: No IS`, `IBL: IBL IS` の progressive accumulation が一致する。
+- 通常 HDRI 入力で cubemap 変換、輝度/面積重み付き CDF、露出/gamma が安定して動く。
+- 変換済み `.penv` 由来 environment で、比較対象 exe と IBL の方向・明るさ・蓄積挙動を比較できる。
 - GitHub Pages のサブパス配信で asset URL が壊れない。
 
 ## 主要な未確定点
 
-- 任意 `.penv` のブラウザ内 decode を必須にするか、同梱 probe は事前変換しつつユーザ probe のために WASM Ptex reader を別途入れるか。
+- 通常 HDRI の初期対応を `.hdr` のみにするか、初期から `.exr` も入れるか。実装リスクは `.hdr` の方が低い。
+- 同梱 environment の配布形式を raw float binary、half-float binary、KTX2 のどれにするか。初期はデバッグしやすい raw/half-float binary が妥当。
+- 任意 `.penv` のブラウザ内 decode を実装するか。現方針では必須ではなく、元同梱 probe は build-time 変換で対応する。
 - 異方性 measured `.dat` はデータ量が大きいため、実際の公開アセットとして何を同梱するか。
 - 元 `BRDFImageSlice::loadImage` が TIFF 未実装なので、Web 版で「元コード同等」を優先するか、実用上の TIFF reader を追加するか。
-- `GL_TEXTURE_CUBE_MAP_SEAMLESS` 不在による IBL 境界差をどの程度まで許容するか。再現を厳密にするなら cube face filtering の追加対策が必要。
+- IBL 境界差をどの程度まで許容するか。WebGL2 の seamless cube map sampling があっても、face 変換、mipmap、CDF の面積重みがずれると元アプリとの差になる。
