@@ -8,6 +8,8 @@ uniform vec3 camForward;
 uniform vec3 camRight;
 uniform vec3 camUp;
 uniform float envIntensity;
+uniform float hideBackground;
+uniform float grayscaleIBL;
 
 in vec2 v_ndc;
 out vec4 fragColor;
@@ -24,6 +26,9 @@ vec2 dirToUV(vec3 d)
 void main(void)
 {
     vec3 dir = normalize(camForward + v_ndc.x * camRight + v_ndc.y * camUp);
-    vec3 c = texture(envMap, dirToUV(dir)).rgb * envIntensity;
+    vec3 c = hideBackground > 0.5 ? vec3(0.21763764) : texture(envMap, dirToUV(dir)).rgb * envIntensity;
+    if (grayscaleIBL > 0.5) {
+        c = vec3(dot(c, vec3(0.2126, 0.7152, 0.0722)));
+    }
     fragColor = vec4(max(c, vec3(0.0)), 1.0);
 }

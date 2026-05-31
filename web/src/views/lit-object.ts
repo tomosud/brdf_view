@@ -11,7 +11,7 @@ import { loadTemplate } from '../brdf/shader-builder.js';
 import { uploadEnv, type EnvTexture } from '../gl/env-texture.js';
 import { buildSphere, parseObjMesh, type IndexedMesh } from '../gl/mesh.js';
 import { perspective, lookAt, DEG2RAD } from '../gl/mat4.js';
-import { floatControl, selectControl } from '../ui/controls.js';
+import { boolControl, floatControl, selectControl } from '../ui/controls.js';
 import { parseHdr } from '../io/hdr.js';
 import type { HdrImage } from '../io/hdr.js';
 import type { Store } from '../state/store.js';
@@ -53,6 +53,8 @@ export class LitObjectView extends BaseView {
   private exposure = 0.0;
   private numSamples = 128;
   private meshName = 'sphere';
+  private hideBackground = false;
+  private grayscaleIBL = false;
 
   constructor(
     container: HTMLElement,
@@ -190,6 +192,8 @@ export class LitObjectView extends BaseView {
     this.bg.u.v3('camRight', ...cam.camRight);
     this.bg.u.v3('camUp', ...cam.camUp);
     this.bg.u.f('envIntensity', 1.0);
+    this.bg.u.f('hideBackground', this.hideBackground ? 1 : 0);
+    this.bg.u.f('grayscaleIBL', this.grayscaleIBL ? 1 : 0);
     gl.bindVertexArray(this.emptyVAO);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
@@ -216,6 +220,7 @@ export class LitObjectView extends BaseView {
     prog.u.f('useNDotL', s.useNDotL ? 1 : 0);
     prog.u.f('renderWithIBL', this.renderWithIBL ? 1 : 0);
     prog.u.f('envIntensity', 1.0);
+    prog.u.f('grayscaleIBL', this.grayscaleIBL ? 1 : 0);
     prog.u.i('numSamples', this.numSamples);
     prog.u.i('frameIndex', this.accumFrame);
     // env on unit 1 (unit 0 may be used by measured BRDF data)
@@ -337,6 +342,19 @@ export class LitObjectView extends BaseView {
   }
 
   private buildControls(): void {
+    const iblChecks = document.createElement('div');
+    iblChecks.className = 'compact-checks lit-object-checks';
+    iblChecks.append(
+      boolControl('Hide BG IBL', this.hideBackground, (v) => {
+        this.hideBackground = v;
+        this.resetAccumulation();
+      }),
+      boolControl('Gray IBL', this.grayscaleIBL, (v) => {
+        this.grayscaleIBL = v;
+        this.resetAccumulation();
+      }),
+    );
+
     this.footer.append(
       selectControl(
         'Env',
@@ -353,6 +371,7 @@ export class LitObjectView extends BaseView {
         this.meshName,
         (v) => void this.loadObject(v),
       ),
+      iblChecks,
       floatControl('Gamma', this.gamma, 0.1, 5, 2.2, (v) => {
         this.gamma = v;
         this.requestRender();

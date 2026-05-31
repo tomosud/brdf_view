@@ -16,6 +16,7 @@ uniform vec3 incidentVector;
 uniform float useNDotL;
 uniform float renderWithIBL;
 uniform float envIntensity;
+uniform float grayscaleIBL;
 uniform int numSamples;
 uniform int frameIndex;
 
@@ -39,7 +40,11 @@ vec2 dirToUV(vec3 d)
 
 vec3 sampleEnv(vec3 d)
 {
-    return texture(envMap, dirToUV(d)).rgb * envIntensity;
+    vec3 c = texture(envMap, dirToUV(d)).rgb;
+    if (grayscaleIBL > 0.5) {
+        c = vec3(dot(c, vec3(0.2126, 0.7152, 0.0722)));
+    }
+    return c * envIntensity;
 }
 
 // van der Corput radical inverse (base 2)

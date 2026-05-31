@@ -1,6 +1,6 @@
 // Parameter panel: global plot controls (channel, log plot, N.L, incident
-// theta/phi) plus a per-BRDF group with visible/solo/solo-colors and the
-// BRDF's own float/bool/color parameters. Rebuilds from the store on change.
+// theta/phi) plus a per-BRDF group. Only the visible BRDF is expanded because
+// visibility is exclusive in this port. Rebuilds from the store on change.
 
 import { floatControl, boolControl, colorControl, selectControl } from './controls.js';
 import type { Channel, Store } from '../state/store.js';
@@ -54,20 +54,29 @@ function globalSection(store: Store): HTMLElement {
 function brdfSection(store: Store, id: string): HTMLElement {
   const inst = store.state.brdfs.find((b) => b.id === id)!;
   const s = section(inst.def.name);
+  s.classList.add('brdf-section');
+  if (!inst.visible) s.classList.add('brdf-section-collapsed');
   const heading = s.querySelector('h3')!;
+  heading.textContent = '';
+
+  const visibleLabel = document.createElement('label');
+  visibleLabel.className = 'brdf-visible-toggle';
+  const visible = document.createElement('input');
+  visible.type = 'checkbox';
+  visible.checked = inst.visible;
+  visible.addEventListener('change', () => store.setVisible(id, visible.checked));
+  const title = document.createElement('span');
+  title.textContent = inst.def.name;
+  visibleLabel.append(visible, title);
+
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'btn btn-close';
   close.textContent = 'Close';
   close.addEventListener('click', () => store.removeBrdf(id));
-  heading.append(close);
-  const st = store.state;
+  heading.append(visibleLabel, close);
 
-  s.append(
-    boolControl('Visible', inst.visible, (v) => store.setVisible(id, v)),
-    boolControl('Solo', st.soloId === id, (v) => store.patch({ soloId: v ? id : null })),
-    boolControl('Solo RGB channels', st.soloColors, (v) => store.patch({ soloColors: v })),
-  );
+  if (!inst.visible) return s;
 
   for (const p of inst.def.params) {
     if (p.kind === 'float') {

@@ -13,6 +13,7 @@ import type { Store } from '../state/store.js';
 const SPHERE_MARGIN = 1.1;
 const NEAR_PLANE = 0.5;
 const FAR_PLANE = 50.0;
+const VIEW_GRAY_SRGB = 0.5;
 
 export class LitSphereView extends BaseView {
   private cache: BrdfProgramCache;
@@ -51,7 +52,7 @@ export class LitSphereView extends BaseView {
     const gl = this.gl;
     const w = this.canvas.width;
     const h = this.canvas.height;
-    gl.clearColor(0.25, 0.25, 0.25, 1);
+    gl.clearColor(VIEW_GRAY_SRGB, VIEW_GRAY_SRGB, VIEW_GRAY_SRGB, 1);
     gl.enable(gl.DEPTH_TEST);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     if (w === 0 || h === 0) return;

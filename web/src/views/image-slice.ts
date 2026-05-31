@@ -64,7 +64,7 @@ export class ImageSliceView extends BaseView {
     const gl = this.gl;
     const w = this.canvas.width;
     const h = this.canvas.height;
-    gl.clearColor(0.15, 0.15, 0.15, 1);
+    gl.clearColor(0.5, 0.5, 0.5, 1);
     gl.disable(gl.DEPTH_TEST);
     gl.clear(gl.COLOR_BUFFER_BIT);
     if (w === 0 || h === 0) return;
@@ -111,7 +111,7 @@ export class ImageSliceView extends BaseView {
     const w = this.canvas.width;
     const h = this.canvas.height;
     gl.viewport(0, 0, w, h);
-    gl.clearColor(0.15, 0.15, 0.15, 1);
+    gl.clearColor(0.5, 0.5, 0.5, 1);
     gl.enable(gl.DEPTH_TEST);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     if (w === 0 || h === 0) return;
