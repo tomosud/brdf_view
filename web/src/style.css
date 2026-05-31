@@ -53,6 +53,16 @@ html, body {
   cursor: pointer;
 }
 .btn:hover { background: #3d3d3d; }
+.toolbar-select {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  color: var(--text);
+  background: #333;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.toolbar-select[hidden] { display: none; }
 
 #views.drag-over { outline: 2px dashed #6aa9ff; outline-offset: -6px; }
 
@@ -147,6 +157,38 @@ html, body {
 .ctl-float { display: grid; grid-template-columns: 1fr 56px; gap: 4px; }
 .ctl-float input[type='range'] { width: 100%; }
 .ctl-float input[type='number'] { width: 100%; }
+.compact-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 8px;
+  row-gap: 2px;
+}
+.compact-controls .ctl-row {
+  grid-template-columns: 54px minmax(0, 1fr);
+  margin: 1px 0;
+}
+.compact-controls .ctl-float {
+  grid-template-columns: minmax(0, 1fr) 52px;
+}
+.compact-controls .compact-wide,
+.compact-controls .compact-checks {
+  grid-column: 1 / -1;
+}
+.compact-checks {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.compact-checks .ctl-row {
+  display: flex;
+  gap: 6px;
+  margin: 1px 0;
+}
+.image-readout .ctl-value {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 #shader-log {
   grid-column: 1 / -1;

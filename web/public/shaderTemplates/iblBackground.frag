@@ -7,8 +7,6 @@ uniform sampler2D envMap;
 uniform vec3 camForward;
 uniform vec3 camRight;
 uniform vec3 camUp;
-uniform float gamma;
-uniform float exposure;
 uniform float envIntensity;
 
 in vec2 v_ndc;
@@ -27,7 +25,5 @@ void main(void)
 {
     vec3 dir = normalize(camForward + v_ndc.x * camRight + v_ndc.y * camUp);
     vec3 c = texture(envMap, dirToUV(dir)).rgb * envIntensity;
-    c *= pow(2.0, exposure);
-    c = pow(c, vec3(1.0 / gamma));
-    fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+    fragColor = vec4(max(c, vec3(0.0)), 1.0);
 }

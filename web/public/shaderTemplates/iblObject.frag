@@ -11,8 +11,6 @@ precision highp int;
 uniform sampler2D envMap;
 uniform vec3 cameraPos;
 uniform vec3 incidentVector;
-uniform float gamma;
-uniform float exposure;
 uniform float useNDotL;
 uniform float renderWithIBL;
 uniform float envIntensity;
@@ -101,7 +99,5 @@ void main(void)
         result = b;
     }
 
-    result *= pow(2.0, exposure);
-    result = pow(result, vec3(1.0 / gamma));
-    fragColor = vec4(clamp(result, 0.0, 1.0), 1.0);
+    fragColor = vec4(max(result, vec3(0.0)), 1.0);
 }

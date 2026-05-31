@@ -159,7 +159,7 @@ export class ImageSliceView extends BaseView {
 
   private buildControls(): void {
     const readoutRow = document.createElement('div');
-    readoutRow.className = 'ctl-row image-readout';
+    readoutRow.className = 'ctl-row image-readout compact-wide';
     const readoutLabel = document.createElement('span');
     readoutLabel.className = 'ctl-label';
     readoutLabel.textContent = 'HDR';
@@ -168,7 +168,22 @@ export class ImageSliceView extends BaseView {
     this.readout.textContent = this.floatTarget ? '-' : 'unavailable';
     readoutRow.append(readoutLabel, this.readout);
 
-    this.footer.append(
+    const checks = document.createElement('div');
+    checks.className = 'compact-checks';
+    checks.append(
+      boolControl('Square ThetaH', this.useThetaHSquared, (v) => {
+        this.useThetaHSquared = v;
+        this.requestRender();
+      }),
+      boolControl('Show Chroma', this.showChroma, (v) => {
+        this.showChroma = v;
+        this.requestRender();
+      }),
+    );
+
+    const grid = document.createElement('div');
+    grid.className = 'compact-controls image-slice-controls';
+    grid.append(
       selectControl(
         'Mode',
         [
@@ -193,20 +208,14 @@ export class ImageSliceView extends BaseView {
         this.exposure = v;
         this.requestRender();
       }),
-      boolControl('Square ThetaH', this.useThetaHSquared, (v) => {
-        this.useThetaHSquared = v;
-        this.requestRender();
-      }),
-      boolControl('Show Chroma', this.showChroma, (v) => {
-        this.showChroma = v;
-        this.requestRender();
-      }),
       floatControl('Height', this.heightScale, 0.005, 0.25, 0.065, (v) => {
         this.heightScale = v;
         this.requestRender();
       }),
+      checks,
       readoutRow,
     );
+    this.footer.append(grid);
   }
 
   private setupReadout(): void {

@@ -1,4 +1,7 @@
 /sample/brdf-main
 /build
 /dist
-/sample
+/sample/*
+!/sample/brdf/
+/sample/brdf/*
+!/sample/brdf/*.brdf

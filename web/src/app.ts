@@ -5,7 +5,7 @@ import './style.css';
 import { detectFeatures } from './gl/renderer.js';
 import { Store } from './state/store.js';
 import { loadBundledBrdf } from './brdf/loader.js';
-import { loadBrdfFile, loadMeasuredFromUrl } from './io/file-open.js';
+import { loadBrdfFile } from './io/file-open.js';
 import { mountParameterPanel } from './ui/parameter-panel.js';
 import { Plot3DView } from './views/plot-3d.js';
 import { LitSphereView } from './views/lit-sphere.js';
@@ -56,9 +56,11 @@ async function main(): Promise<void> {
 
   // Lit Object (IBL) — needs the equirect HDRI environment.
   try {
-    const res = await fetch(`${import.meta.env.BASE_URL}environments/ibl.hdr`);
+    const envNames = prioritize(await fetchJson<string[]>(`${import.meta.env.BASE_URL}environments/index.json`).catch(() => ['ibl.hdr']), 'ibl.hdr');
+    const objNames = await fetchJson<string[]>(`${import.meta.env.BASE_URL}obj/index.json`).catch(() => []);
+    const res = await fetch(`${import.meta.env.BASE_URL}environments/${envNames[0]}`);
     if (res.ok) {
-      new LitObjectView(viewRows.bottom, store, parseHdr(await res.arrayBuffer()));
+      new LitObjectView(viewRows.bottom, store, parseHdr(await res.arrayBuffer()), envNames, objNames);
     } else {
       console.warn('IBL environment not found; Lit Object view skipped.');
     }
@@ -68,6 +70,7 @@ async function main(): Promise<void> {
   new LitSphereView(viewRows.bottom, store);
 
   wireFileLoading(store, views);
+  void wireSampleBrdfs(store);
 
   // Seed with lambert and disney.
   for (const file of ['lambert.brdf', 'disney.brdf']) {
@@ -131,16 +134,6 @@ function wireFileLoading(store: Store, dropTarget: HTMLElement): void {
     input.value = '';
   });
 
-  document.getElementById('load-sample-merl')!.addEventListener('click', async () => {
-    try {
-      const url = `${import.meta.env.BASE_URL}measured/gold-metallic-paint3.binary`;
-      store.addBrdf(await loadMeasuredFromUrl(url, 'gold-metallic-paint3'));
-    } catch (e) {
-      fatal(`Sample MERL not available: ${(e as Error).message}`);
-      setTimeout(() => document.getElementById('fatal')!.setAttribute('hidden', ''), 4000);
-    }
-  });
-
   // Drag-and-drop onto the views area.
   dropTarget.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -151,6 +144,60 @@ function wireFileLoading(store: Store, dropTarget: HTMLElement): void {
     e.preventDefault();
     dropTarget.classList.remove('drag-over');
     if (e.dataTransfer?.files.length) void addFiles(e.dataTransfer.files);
+  });
+}
+
+async function wireSampleBrdfs(store: Store): Promise<void> {
+  const button = document.getElementById('load-sample-brdf') as HTMLButtonElement;
+  const select = document.getElementById('sample-brdf-select') as HTMLSelectElement;
+
+  try {
+    const names = await fetchJson<string[]>(`${import.meta.env.BASE_URL}brdfs/index.json`);
+    select.replaceChildren(
+      ...names.map((name) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name.replace(/\.brdf$/i, '');
+        return opt;
+      }),
+    );
+  } catch (e) {
+    console.warn('Sample BRDF manifest not available', e);
+  }
+
+  const loadSelected = async () => {
+    if (!select.value) return;
+    try {
+      store.addBrdf(await loadBundledBrdf(select.value));
+    } catch (e) {
+      fatal(`Could not load ${select.value}: ${(e as Error).message}`);
+      setTimeout(() => document.getElementById('fatal')!.setAttribute('hidden', ''), 4000);
+    }
+  };
+
+  button.addEventListener('click', () => {
+    if (select.hidden) {
+      select.hidden = false;
+      if (!select.value && select.options.length) select.selectedIndex = 0;
+      select.focus();
+      return;
+    }
+    void loadSelected();
+  });
+  select.addEventListener('change', () => void loadSelected());
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+function prioritize(names: string[], first: string): string[] {
+  return [...names].sort((a, b) => {
+    if (a === first) return -1;
+    if (b === first) return 1;
+    return a.localeCompare(b);
   });
 }
 

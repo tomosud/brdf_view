@@ -6,6 +6,7 @@ uniform mat4 projectionMatrix;
 uniform mat4 viewMatrix;
 
 in vec3 vtx_position;
+in vec3 vtx_normal;
 
 out vec3 wNormal;
 out vec3 wPos;
@@ -13,6 +14,6 @@ out vec3 wPos;
 void main(void)
 {
     wPos = vtx_position;
-    wNormal = normalize(vtx_position);
+    wNormal = normalize(vtx_normal);
     gl_Position = projectionMatrix * viewMatrix * vec4(vtx_position, 1.0);
 }

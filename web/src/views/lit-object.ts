@@ -9,9 +9,10 @@ import { BrdfProgramCache } from '../gl/brdf-program.js';
 import { buildProgram, Uniforms } from '../gl/renderer.js';
 import { loadTemplate } from '../brdf/shader-builder.js';
 import { uploadEnv, type EnvTexture } from '../gl/env-texture.js';
-import { buildSphere } from '../gl/mesh.js';
+import { buildSphere, parseObjMesh, type IndexedMesh } from '../gl/mesh.js';
 import { perspective, lookAt, DEG2RAD } from '../gl/mat4.js';
 import { floatControl, selectControl } from '../ui/controls.js';
+import { parseHdr } from '../io/hdr.js';
 import type { HdrImage } from '../io/hdr.js';
 import type { Store } from '../state/store.js';
 
@@ -33,15 +34,15 @@ export class LitObjectView extends BaseView {
   private accum: { program: WebGLProgram; u: Uniforms };
   private display: { program: WebGLProgram; u: Uniforms };
   private posVBO: WebGLBuffer;
+  private normalVBO: WebGLBuffer;
   private idxVBO: WebGLBuffer;
-  private indexCount: number;
+  private indexCount = 0;
   private emptyVAO: WebGLVertexArrayObject;
   private sceneTarget: RenderTarget | null = null;
   private accumTargets: [RenderTarget, RenderTarget] | null = null;
   private accumRead = 0;
   private accumFrame = 0;
   private floatRenderTargets = false;
-  private accumStatus: HTMLElement | null = null;
   private resetUnsub: (() => void) | null = null;
 
   private lookTheta = 1.2;
@@ -51,22 +52,25 @@ export class LitObjectView extends BaseView {
   private gamma = 2.2;
   private exposure = 0.0;
   private numSamples = 128;
+  private meshName = 'sphere';
 
-  constructor(container: HTMLElement, store: Store, envImg: HdrImage) {
+  constructor(
+    container: HTMLElement,
+    store: Store,
+    envImg: HdrImage,
+    private envNames: string[] = [],
+    private objNames: string[] = [],
+  ) {
     super(container, store, 'Lit Object');
     const gl = this.gl;
 
     this.floatRenderTargets = !!gl.getExtension('EXT_color_buffer_float');
     this.env = uploadEnv(gl, envImg);
 
-    const sphere = buildSphere(1.0, 100, 100);
-    this.indexCount = sphere.indices.length;
     this.posVBO = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.posVBO);
-    gl.bufferData(gl.ARRAY_BUFFER, sphere.positions, gl.STATIC_DRAW);
+    this.normalVBO = gl.createBuffer()!;
     this.idxVBO = gl.createBuffer()!;
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.idxVBO);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, sphere.indices, gl.STATIC_DRAW);
+    this.setMesh(buildSphere(1.0, 100, 100));
     this.emptyVAO = gl.createVertexArray()!;
     const accumProgram = buildProgram(gl, FULLSCREEN_VERT, ACCUM_FRAG, 'accumulate');
     const displayProgram = buildProgram(gl, FULLSCREEN_VERT, DISPLAY_FRAG, 'displayTexture');
@@ -130,8 +134,13 @@ export class LitObjectView extends BaseView {
 
     this.ensureTargets(w, h);
     const cam = this.camera();
-    if (!this.renderWithIBL || !this.sceneTarget || !this.accumTargets) {
-      this.drawScene(cam, null, w, h);
+    if (!this.sceneTarget || !this.accumTargets) {
+      return;
+    }
+
+    if (!this.renderWithIBL) {
+      this.drawScene(cam, this.sceneTarget.framebuffer, w, h);
+      this.drawTextureToScreen(this.sceneTarget.texture, w, h);
       this.updateAccumStatus(0);
       return;
     }
@@ -180,8 +189,6 @@ export class LitObjectView extends BaseView {
     this.bg.u.v3('camForward', ...cam.camForward);
     this.bg.u.v3('camRight', ...cam.camRight);
     this.bg.u.v3('camUp', ...cam.camUp);
-    this.bg.u.f('gamma', this.gamma);
-    this.bg.u.f('exposure', this.exposure);
     this.bg.u.f('envIntensity', 1.0);
     gl.bindVertexArray(this.emptyVAO);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -206,8 +213,6 @@ export class LitObjectView extends BaseView {
     prog.u.m4('viewMatrix', cam.view);
     prog.u.v3('cameraPos', ...cam.eye);
     prog.u.v3('incidentVector', iv[0], iv[1], iv[2]);
-    prog.u.f('gamma', this.gamma);
-    prog.u.f('exposure', this.exposure);
     prog.u.f('useNDotL', s.useNDotL ? 1 : 0);
     prog.u.f('renderWithIBL', this.renderWithIBL ? 1 : 0);
     prog.u.f('envIntensity', 1.0);
@@ -222,6 +227,12 @@ export class LitObjectView extends BaseView {
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posVBO);
     gl.enableVertexAttribArray(prog.posLoc);
     gl.vertexAttribPointer(prog.posLoc, 3, gl.FLOAT, false, 0, 0);
+    const normalLoc = gl.getAttribLocation(prog.program, 'vtx_normal');
+    if (normalLoc >= 0) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.normalVBO);
+      gl.enableVertexAttribArray(normalLoc);
+      gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0);
+    }
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.idxVBO);
     gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_INT, 0);
   }
@@ -253,6 +264,8 @@ export class LitObjectView extends BaseView {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texture);
     this.display.u.i('sourceTex', 0);
+    this.display.u.f('gamma', this.gamma);
+    this.display.u.f('exposure', this.exposure);
     gl.bindVertexArray(this.emptyVAO);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
@@ -266,12 +279,7 @@ export class LitObjectView extends BaseView {
   }
 
   private updateAccumStatus(frames: number): void {
-    if (!this.accumStatus) return;
-    if (!this.renderWithIBL) {
-      this.accumStatus.textContent = 'direct';
-      return;
-    }
-    this.accumStatus.textContent = `${frames * this.numSamples} / ${MAX_ACCUM_FRAMES * this.numSamples}`;
+    void frames;
   }
 
   private disposeTarget(target: RenderTarget | null): void {
@@ -287,43 +295,72 @@ export class LitObjectView extends BaseView {
     this.resetUnsub?.();
   }
 
-  private buildControls(): void {
-    const accumRow = document.createElement('div');
-    accumRow.className = 'ctl-row';
-    const accumLabel = document.createElement('span');
-    accumLabel.className = 'ctl-label';
-    accumLabel.textContent = 'Accum';
-    this.accumStatus = document.createElement('span');
-    this.accumStatus.className = 'ctl-value';
-    this.accumStatus.textContent = '0';
-    accumRow.append(accumLabel, this.accumStatus);
+  private setMesh(mesh: IndexedMesh): void {
+    const gl = this.gl;
+    this.indexCount = mesh.indices.length;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.posVBO);
+    gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.normalVBO);
+    gl.bufferData(gl.ARRAY_BUFFER, mesh.normals ?? mesh.positions, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.idxVBO);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
+  }
 
+  private async loadEnvironment(name: string): Promise<void> {
+    if (!name) return;
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}environments/${name}`);
+      if (!res.ok) throw new Error(`${res.status}`);
+      this.env = uploadEnv(this.gl, parseHdr(await res.arrayBuffer()));
+      this.resetAccumulation();
+    } catch (e) {
+      console.error(`Failed to load environment ${name}`, e);
+    }
+  }
+
+  private async loadObject(name: string): Promise<void> {
+    if (name === 'sphere') {
+      this.meshName = name;
+      this.setMesh(buildSphere(1.0, 100, 100));
+      this.resetAccumulation();
+      return;
+    }
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}obj/${name}`);
+      if (!res.ok) throw new Error(`${res.status}`);
+      this.meshName = name;
+      this.setMesh(parseObjMesh(await res.text()));
+      this.resetAccumulation();
+    } catch (e) {
+      console.error(`Failed to load object ${name}`, e);
+    }
+  }
+
+  private buildControls(): void {
     this.footer.append(
       selectControl(
-        'Mode',
-        [
-          { value: 'ibl', text: 'IBL (cosine)' },
-          { value: 'none', text: 'No IBL' },
-        ],
-        'ibl',
-        (v) => {
-          this.renderWithIBL = v === 'ibl';
-          this.resetAccumulation();
-        },
+        'Env',
+        this.envNames.map((name) => ({ value: name, text: name.replace(/\.(hdr|exr)$/i, '') })),
+        this.envNames[0] ?? '',
+        (v) => void this.loadEnvironment(v),
       ),
-      floatControl('Samples', this.numSamples, 16, 1024, 128, (v) => {
-        this.numSamples = Math.round(v);
-        this.resetAccumulation();
-      }),
+      selectControl(
+        'Object',
+        [
+          { value: 'sphere', text: 'sphere' },
+          ...this.objNames.map((name) => ({ value: name, text: name.replace(/\.obj$/i, '') })),
+        ],
+        this.meshName,
+        (v) => void this.loadObject(v),
+      ),
       floatControl('Gamma', this.gamma, 0.1, 5, 2.2, (v) => {
         this.gamma = v;
-        this.resetAccumulation();
+        this.requestRender();
       }),
       floatControl('Exposure', this.exposure, -10, 10, 0, (v) => {
         this.exposure = v;
-        this.resetAccumulation();
+        this.requestRender();
       }),
-      accumRow,
     );
   }
 
@@ -464,9 +501,14 @@ void main() {
 const DISPLAY_FRAG = `#version 300 es
 precision highp float;
 uniform sampler2D sourceTex;
+uniform float gamma;
+uniform float exposure;
 in vec2 vUv;
 out vec4 fragColor;
 void main() {
-  fragColor = texture(sourceTex, vUv);
+  vec3 c = max(texture(sourceTex, vUv).rgb, vec3(0.0));
+  c *= pow(2.0, exposure);
+  c = pow(c, vec3(1.0 / gamma));
+  fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 `;
