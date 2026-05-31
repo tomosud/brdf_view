@@ -3,8 +3,9 @@
 Disney BRDF Explorer をブラウザで使えるようにした Web 版です。
 
 - Web app: https://tomosud.github.io/brdf_view/
-- Repository: https://github.com/tomosud/brdf_view
-- Windows comparison runtime: https://github.com/tomosud/brdf_view/releases/tag/brdf-runtime-v0.1.0
+
+<img width="1700" height="899" alt="image" src="https://github.com/user-attachments/assets/30943e8d-63ab-4fca-9189-55b841eaeb76" />
+  
 
 ## できること
 
@@ -12,7 +13,8 @@ Disney BRDF Explorer をブラウザで使えるようにした Web 版です。
 - MERL の `.binary` BRDF ファイルを読み込めます。
 - サンプル BRDF をアプリ内から選択して読み込めます。
 - BRDF パラメータを調整しながら、複数のビューで見た目を確認できます。
-- Windows 版 BRDF Explorer runtime を比較対象として利用できます。
+- オリジナルの BRDF Explorer runtime を比較対象として置きました。
+- - Windows comparison runtime: https://github.com/tomosud/brdf_view/releases/tag/brdf-runtime-v0.1.0
 
 ## 使い方
 
