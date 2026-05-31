@@ -68,7 +68,7 @@ export class ImageSliceView extends BaseView {
 
   private buildControls(): void {
     this.footer.append(
-      floatControl('phiD°', this.phiDdeg, 0, 360, 90, (v) => {
+      floatControl('phiD°', this.phiDdeg, 0, 180, 90, (v) => {
         this.phiDdeg = v;
         this.requestRender();
       }),

@@ -72,16 +72,31 @@ export class Store {
     for (const fn of this.listeners) fn();
   }
 
-  addBrdf(instance: BrdfInstance): void {
+  addBrdf(instance: BrdfInstance, makeVisible = true): void {
+    if (makeVisible) {
+      for (const b of this.state.brdfs) b.visible = false;
+      instance.visible = true;
+    }
     this.state.drawColors.set(instance.id, PALETTE[this.paletteIndex++ % PALETTE.length]);
     this.state.brdfs.push(instance);
     this.emit();
   }
 
   removeBrdf(id: string): void {
+    const wasVisible = this.state.brdfs.some((b) => b.id === id && b.visible);
     this.state.brdfs = this.state.brdfs.filter((b) => b.id !== id);
     this.state.drawColors.delete(id);
     if (this.state.soloId === id) this.state.soloId = null;
+    if (wasVisible && !this.state.brdfs.some((b) => b.visible) && this.state.brdfs.length) {
+      this.state.brdfs[0].visible = true;
+    }
+    this.emit();
+  }
+
+  setVisible(id: string, visible: boolean): void {
+    for (const b of this.state.brdfs) {
+      b.visible = visible && b.id === id;
+    }
     this.emit();
   }
 

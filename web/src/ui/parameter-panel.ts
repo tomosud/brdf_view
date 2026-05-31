@@ -54,13 +54,17 @@ function globalSection(store: Store): HTMLElement {
 function brdfSection(store: Store, id: string): HTMLElement {
   const inst = store.state.brdfs.find((b) => b.id === id)!;
   const s = section(inst.def.name);
+  const heading = s.querySelector('h3')!;
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'btn btn-close';
+  close.textContent = 'Close';
+  close.addEventListener('click', () => store.removeBrdf(id));
+  heading.append(close);
   const st = store.state;
 
   s.append(
-    boolControl('Visible', inst.visible, (v) => {
-      inst.visible = v;
-      store.emit();
-    }),
+    boolControl('Visible', inst.visible, (v) => store.setVisible(id, v)),
     boolControl('Solo', st.soloId === id, (v) => store.patch({ soloId: v ? id : null })),
     boolControl('Solo RGB channels', st.soloColors, (v) => store.patch({ soloColors: v })),
   );

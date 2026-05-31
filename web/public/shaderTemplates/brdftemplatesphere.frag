@@ -30,7 +30,7 @@ vec3 computeWithDirectionalLight( vec3 surfPt, vec3 incidentVector, vec3 viewVec
 
     // multiply in the cosine factor
     if (useNDotL != 0.0)
-        b *= dot( normal, incidentVector );
+        b *= max( dot( normal, incidentVector ), 0.0 );
 
     return b;
 }

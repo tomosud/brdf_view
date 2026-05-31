@@ -73,7 +73,7 @@ async function main(): Promise<void> {
     try {
       const inst = await loadBundledBrdf(file);
       if (file !== 'lambert.brdf') inst.visible = false; // start with one visible
-      store.addBrdf(inst);
+      store.addBrdf(inst, inst.visible);
     } catch (e) {
       console.error(e);
     }
