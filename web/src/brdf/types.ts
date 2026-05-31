@@ -25,6 +25,14 @@ export type ParamDef = FloatParam | BoolParam | ColorParam;
 
 export type ParamValue = number | boolean | [number, number, number];
 
+/** Float data for a measured (MERL) BRDF, packed into an R32F texture. */
+export interface MeasuredData {
+  /** 3*N floats: R block, G block, B block (MERL layout). */
+  data: Float32Array;
+  texWidth: number;
+  texHeight: number;
+}
+
 /** A parsed .brdf file: parameter declarations + raw GLSL fragments (preserved verbatim). */
 export interface BrdfDef {
   /** Display name, derived from the file name (without extension). */
@@ -34,6 +42,14 @@ export interface BrdfDef {
   shaderSource: string;
   /** Raw GLSL importance-sampling fragment (IBL); preserved but unused in this milestone. */
   isFuncSource: string | null;
+  /**
+   * Skip the int->float literal promotion pass (shaderSource is already valid
+   * GLSL ES 3.00). Used for built-in shaders like the measured BRDF, whose
+   * integer index arithmetic must stay integer.
+   */
+  noPromote?: boolean;
+  /** Present for measured BRDFs: the data uploaded to a sampler2D `measuredData`. */
+  measured?: MeasuredData;
 }
 
 /** A loaded BRDF together with its live UI state and current parameter values. */

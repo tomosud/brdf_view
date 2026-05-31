@@ -9,6 +9,13 @@
     <div id="app">
       <aside id="sidebar">
         <h1>BRDF Explorer <small>web</small></h1>
+        <div id="toolbar">
+          <label class="btn">
+            Open BRDF…
+            <input id="file-input" type="file" accept=".brdf,.binary" multiple hidden />
+          </label>
+          <button id="load-sample-merl" class="btn" type="button">Load sample MERL</button>
+        </div>
         <div id="parameter-panel"></div>
       </aside>
       <main id="views"></main>

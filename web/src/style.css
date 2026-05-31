@@ -36,6 +36,26 @@ html, body {
 }
 #sidebar h1 small { color: var(--muted); font-weight: 400; }
 
+#toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.btn {
+  display: inline-block;
+  padding: 4px 8px;
+  font: inherit;
+  color: var(--text);
+  background: #333;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn:hover { background: #3d3d3d; }
+
+#views.drag-over { outline: 2px dashed #6aa9ff; outline-offset: -6px; }
+
 #views {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));

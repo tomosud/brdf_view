@@ -43,8 +43,9 @@ export function promoteIntLiterals(src: string): string {
 
 export function injectTemplate(template: string, def: BrdfDef): string {
   const uniforms = uniformDecls(def.params);
-  const brdf = `\n${promoteIntLiterals(def.shaderSource)}\n`;
-  const isFunc = def.isFuncSource ? `\n${promoteIntLiterals(def.isFuncSource)}\n` : '';
+  const promote = (s: string) => (def.noPromote ? s : promoteIntLiterals(s));
+  const brdf = `\n${promote(def.shaderSource)}\n`;
+  const isFunc = def.isFuncSource ? `\n${promote(def.isFuncSource)}\n` : '';
   return template
     .split('::INSERT_UNIFORMS_HERE::')
     .join(uniforms)
@@ -63,7 +64,8 @@ export function loadTemplate(file: string): Promise<string> {
   let p = templateCache.get(file);
   if (!p) {
     const url = `${import.meta.env.BASE_URL}shaderTemplates/${file}`;
-    p = fetch(url).then((r) => {
+    // no-cache so an edited shader template is never served stale during dev.
+    p = fetch(url, { cache: 'no-cache' }).then((r) => {
       if (!r.ok) throw new Error(`failed to load shader template ${file}: ${r.status}`);
       return r.text();
     });

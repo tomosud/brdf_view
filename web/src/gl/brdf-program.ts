@@ -15,6 +15,7 @@ export interface BrdfProgram {
 export class BrdfProgramCache {
   private templates: { vert: string; frag: string } | null = null;
   private programs = new Map<BrdfDef, BrdfProgram | 'error'>();
+  private textures = new Map<BrdfDef, WebGLTexture>();
   readonly ready: Promise<void>;
 
   constructor(
@@ -56,8 +57,37 @@ export class BrdfProgramCache {
     }
   }
 
+  /** Upload (once per context) the measured BRDF data as an R32F texture. */
+  private ensureTexture(def: BrdfDef): WebGLTexture | null {
+    if (!def.measured) return null;
+    let tex = this.textures.get(def);
+    if (tex) return tex;
+    const gl = this.gl;
+    tex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(
+      gl.TEXTURE_2D, 0, gl.R32F,
+      def.measured.texWidth, def.measured.texHeight, 0,
+      gl.RED, gl.FLOAT, def.measured.data,
+    );
+    this.textures.set(def, tex);
+    return tex;
+  }
+
   /** Set the BRDF's float/bool/color parameter uniforms from its current values. */
   applyParams(u: Uniforms, inst: BrdfInstance): void {
+    if (inst.def.measured) {
+      const tex = this.ensureTexture(inst.def);
+      if (tex) {
+        this.gl.activeTexture(this.gl.TEXTURE0);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
+        u.i('measuredData', 0);
+      }
+    }
     for (const p of inst.def.params) {
       const v = inst.values.get(p.name);
       if (p.kind === 'float') u.f(p.name, typeof v === 'number' ? v : p.default);

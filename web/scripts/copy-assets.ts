@@ -59,4 +59,12 @@ if (!existsSync(srcRoot)) {
 const brdfs = copyByExt(join(srcRoot, 'src', 'brdfs'), join(publicRoot, 'brdfs'), ['.brdf']);
 const licenses = copyFiles(srcRoot, publicRoot, ['LICENSE', 'LICENSE-BINARY', 'README']);
 
-console.log(`[copy-assets] copied ${brdfs} .brdf file(s), ${licenses} license/readme file(s).`);
+// Large measured-BRDF samples and the default IBL environment live outside the
+// original source tree (sample/brdf, assets/). These are gitignored under
+// public/ (too large / licensed data) and used for local dev + the sample button.
+const measured = copyByExt(join(repoRoot, 'sample', 'brdf'), join(publicRoot, 'measured'), ['.binary']);
+const envs = copyByExt(join(repoRoot, 'assets'), join(publicRoot, 'environments'), ['.hdr', '.exr']);
+
+console.log(
+  `[copy-assets] copied ${brdfs} .brdf, ${licenses} license/readme, ${measured} measured .binary, ${envs} environment file(s).`,
+);

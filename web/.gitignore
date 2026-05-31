@@ -1,3 +1,7 @@
 node_modules
 dist
 *.local
+
+# Large / licensed assets bundled for local dev only (see scripts/copy-assets.ts)
+public/measured
+public/environments
