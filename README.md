@@ -1,5 +1,6 @@
 # BRDF Explorer Web
 
+MERL BRDF Database の測定BRDFを簡単に確認する方法が無くなっていたので作りました。
 Disney BRDF Explorer をブラウザで使えるようにした Web 版です。
 
 - Web app: https://tomosud.github.io/brdf_view/
