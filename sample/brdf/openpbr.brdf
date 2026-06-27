@@ -44,6 +44,10 @@ float iorToF0(float ior) {
     return r * r;
 }
 
+vec3 mon2lin(vec3 x) {
+    return vec3(pow(x[0], 2.2), pow(x[1], 2.2), pow(x[2], 2.2));
+}
+
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (vec3(1.0) - F0) * schlick5(cosTheta);
 }
@@ -140,11 +144,16 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
     float LdotX = dot(L, X), LdotY = dot(L, Y);
     float VdotX = dot(V, X), VdotY = dot(V, Y);
 
+    vec3 base_color_lin     = mon2lin(base_color);
+    vec3 specular_color_lin = mon2lin(specular_color);
+    vec3 coat_color_lin     = mon2lin(coat_color);
+    vec3 fuzz_color_lin     = mon2lin(fuzz_color);
+
     // ── Coat ─────────────────────────────────────────────────────────────────
     float coat_f0   = iorToF0(coat_ior);
     float coat_a    = max(sqr(coat_roughness), 0.0001);
     float coat_Fr   = coat_f0 + (1.0 - coat_f0) * schlick5(LdotH);
-    vec3  coat_brdf = coat_weight * coat_color * coat_Fr
+    vec3  coat_brdf = coat_weight * coat_color_lin * coat_Fr
                     * ggxD(NdotH, HdotX, HdotY, coat_a, coat_a)
                     * ggxV(NdotL, NdotV, LdotX, LdotY, VdotX, VdotY, coat_a, coat_a);
     float coat_attn = 1.0 - coat_weight * coat_Fr;
@@ -156,8 +165,8 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
 
     // ── F0: IOR-based dielectric or tinted metallic ───────────────────────────
     float f0_dielectric = specular_weight * iorToF0(specular_ior);
-    vec3  F0 = mix(f0_dielectric * specular_color,
-                   base_color * specular_color,
+    vec3  F0 = mix(f0_dielectric * specular_color_lin,
+                   base_color_lin * specular_color_lin,
                    base_metalness);
 
     // ── Specular Fresnel (standard Schlick, or thin-film when weight > 0) ─────
@@ -165,7 +174,7 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
     // For metallic surfaces the thin film is tinted by base_color (approximation).
     vec3 std_F  = fresnelSchlick(LdotH, F0);
     vec3 tf_raw = thinFilmFresnel(LdotH, 1.0, thin_film_ior, specular_ior, thin_film_thickness);
-    vec3 tf_F   = tf_raw * mix(specular_color, base_color * specular_color, base_metalness);
+    vec3 tf_F   = tf_raw * mix(specular_color_lin, base_color_lin * specular_color_lin, base_metalness);
     vec3 spec_F = mix(std_F, tf_F, thin_film_weight);
 
     vec3 spec_brdf = spec_F
@@ -173,14 +182,14 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
                    * ggxV(NdotL, NdotV, LdotX, LdotY, VdotX, VdotY, ax, ay);
 
     // ── EON diffuse (dielectric only; metals have no diffuse) ─────────────────
-    float avg_specF = dot(fresnelSchlick(LdotH, f0_dielectric * specular_color),
+    float avg_specF = dot(fresnelSchlick(LdotH, f0_dielectric * specular_color_lin),
                           vec3(1.0 / 3.0));
-    vec3  diff_brdf = base_weight * (1.0 - base_metalness) * base_color
+    vec3  diff_brdf = base_weight * (1.0 - base_metalness) * base_color_lin
                     * eonDiffuse(NdotL, NdotV, LdotV, base_diffuse_roughness)
                     * (1.0 - avg_specF);
 
     // ── Fuzz / Sheen ──────────────────────────────────────────────────────────
-    vec3 fuzz_brdf = fuzz_weight * fuzz_color
+    vec3 fuzz_brdf = fuzz_weight * fuzz_color_lin
                    * charlieD(NdotH, fuzz_roughness)
                    * sheenV(NdotL, NdotV);
 
