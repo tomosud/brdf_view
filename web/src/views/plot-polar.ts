@@ -23,8 +23,14 @@ export class PlotPolarView extends BaseView {
   private centerY = 0.75;
 
   constructor(container: HTMLElement, store: Store) {
-    super(container, store, 'Polar Plot');
+    super(
+      container,
+      store,
+      'Polar Plot',
+      '2D slice through the incident azimuth plane. Curve radius is BRDF value versus outgoing/view angle.',
+    );
     const gl = this.gl;
+    this.root.append(guideLegend());
     this.guides = new Line2D(gl);
     this.vao = createEmptyVAO(gl);
     this.setupInteraction();
@@ -156,4 +162,24 @@ export class PlotPolarView extends BaseView {
       this.requestRender();
     });
   }
+}
+
+function guideLegend(): HTMLElement {
+  const legend = document.createElement('div');
+  legend.className = 'view-legend polar-legend';
+  legend.title = 'Guide lines: N normal, L incident light, R mirror reflection. View direction V is swept by the curve.';
+  const items: [string, string, string][] = [
+    ['N', '#adffad', 'normal'],
+    ['H', '#000000', 'horizon'],
+    ['L', '#adffff', 'light'],
+    ['R', '#ffadff', 'mirror'],
+  ];
+  for (const [key, color, text] of items) {
+    const item = document.createElement('span');
+    const swatch = document.createElement('i');
+    swatch.style.backgroundColor = color;
+    item.append(swatch, `${key} ${text}`);
+    legend.append(item);
+  }
+  return legend;
 }

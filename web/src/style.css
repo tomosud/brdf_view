@@ -125,6 +125,7 @@ html, body {
 }
 
 .view {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -153,6 +154,35 @@ html, body {
 }
 .view-controls:empty { display: none; }
 .view-controls .ctl-row { grid-template-columns: 80px 1fr; margin: 2px 0; }
+.view-legend {
+  position: absolute;
+  top: 28px;
+  right: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px 8px;
+  max-width: calc(100% - 16px);
+  padding: 3px 5px;
+  color: #222;
+  background: rgb(255 255 255 / 78%);
+  border: 1px solid rgb(0 0 0 / 18%);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.2;
+  pointer-events: none;
+}
+.view-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.view-legend i {
+  width: 14px;
+  height: 3px;
+  border: 1px solid rgb(0 0 0 / 30%);
+}
 .ctl-value {
   color: var(--text);
   font-variant-numeric: tabular-nums;

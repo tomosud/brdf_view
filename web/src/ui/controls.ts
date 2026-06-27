@@ -4,13 +4,14 @@
 
 import { clamp01, clampRgb, linearToSrgbRgb, srgbToLinearRgb, type Rgb } from './color-space.js';
 
-export function labeledRow(label: string, control: HTMLElement): HTMLElement {
+export function labeledRow(label: string, control: HTMLElement, description?: string): HTMLElement {
   const row = document.createElement('label');
   row.className = 'ctl-row';
+  if (description) row.title = description;
   const span = document.createElement('span');
   span.className = 'ctl-label';
   span.textContent = label;
-  span.title = label;
+  span.title = description ?? label;
   row.append(span, control);
   return row;
 }
@@ -22,6 +23,8 @@ export function floatControl(
   max: number,
   def: number,
   onChange: (v: number) => void,
+  description?: string,
+  disabled = false,
 ): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'ctl-float';
@@ -43,6 +46,8 @@ export function floatControl(
   num.max = String(max);
   num.step = String(numberStep);
   num.value = format(value);
+  slider.disabled = disabled;
+  num.disabled = disabled;
 
   const set = (v: number, from?: HTMLInputElement, formatNumber = from !== num) => {
     if (!Number.isFinite(v)) return;
@@ -57,6 +62,10 @@ export function floatControl(
     set(Number(num.value), num, false);
   });
   num.addEventListener('blur', () => set(Number(num.value)));
+  if (description) {
+    slider.title = description;
+    num.title = description;
+  }
   // Ctrl+click resets to default.
   slider.addEventListener('pointerdown', (e) => {
     if (e.ctrlKey || e.metaKey) {
@@ -66,15 +75,21 @@ export function floatControl(
   });
 
   wrap.append(slider, num);
-  return labeledRow(label, wrap);
+  return labeledRow(label, wrap, description);
 }
 
-export function boolControl(label: string, value: boolean, onChange: (v: boolean) => void): HTMLElement {
+export function boolControl(
+  label: string,
+  value: boolean,
+  onChange: (v: boolean) => void,
+  description?: string,
+): HTMLElement {
   const cb = document.createElement('input');
   cb.type = 'checkbox';
   cb.checked = value;
+  if (description) cb.title = description;
   cb.addEventListener('change', () => onChange(cb.checked));
-  return labeledRow(label, cb);
+  return labeledRow(label, cb, description);
 }
 
 export function colorControl(
@@ -300,8 +315,10 @@ export function selectControl(
   options: { value: string; text: string }[],
   value: string,
   onChange: (v: string) => void,
+  description?: string,
 ): HTMLElement {
   const sel = document.createElement('select');
+  if (description) sel.title = description;
   for (const o of options) {
     const opt = document.createElement('option');
     opt.value = o.value;
@@ -310,7 +327,7 @@ export function selectControl(
   }
   sel.value = value;
   sel.addEventListener('change', () => onChange(sel.value));
-  return labeledRow(label, sel);
+  return labeledRow(label, sel, description);
 }
 
 function clamp255(x: number): number {

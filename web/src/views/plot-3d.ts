@@ -49,7 +49,12 @@ export class Plot3DView extends BaseView {
   private lastDirKey = '';
 
   constructor(container: HTMLElement, store: Store) {
-    super(container, store, '3D Plot');
+    super(
+      container,
+      store,
+      '3D Plot',
+      'Fixed incident light; each outgoing/view direction is displaced by BRDF value. Optional N.L shows reflected radiance shape.',
+    );
     const gl = this.gl;
 
     const hemi = buildHemisphere(6);

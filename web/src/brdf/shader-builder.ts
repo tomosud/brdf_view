@@ -8,8 +8,10 @@
 //
 // The templates under public/shaderTemplates/ are already authored as
 // `#version 300 es`, so no #version rewriting happens here. The user's BRDF
-// body is injected unchanged; conversion of any GLSL 410-isms in user code is a
-// deliberate non-goal (the bundled sample .brdf files are ES-compatible GLSL).
+// body is injected almost unchanged. A small compatibility pass renames user
+// functions that collide with GLSL ES built-ins (for example `reflect`) because
+// WebGL2 rejects redeclaring them even though the original desktop path accepted
+// some of these samples.
 
 import type { BrdfDef, ParamDef } from './types.js';
 import { MITER_GLSL } from '../gl/line-expansion.js';
@@ -41,9 +43,28 @@ export function promoteIntLiterals(src: string): string {
   return src.replace(/(?<![\w.[])(\d+)(?![\w.])/g, '$1.0');
 }
 
+/**
+ * Rename user-defined functions that collide with GLSL ES built-ins.
+ *
+ * The source .brdf files are left untouched. This only changes the transient
+ * shader string injected into WebGL templates. Keep this deliberately narrow:
+ * only rename a built-in when this BRDF actually declares that function.
+ */
+export function escapeBuiltinFunctionRedeclarations(src: string): string {
+  const builtins = ['reflect'];
+  let out = src;
+  for (const name of builtins) {
+    const declaration = new RegExp(`\\b(?:float|vec[234]|mat[234]|bool|int)\\s+${name}\\s*\\(`);
+    if (!declaration.test(out)) continue;
+    out = out.replace(new RegExp(`\\b${name}\\s*\\(`, 'g'), `brdf_${name}(`);
+  }
+  return out;
+}
+
 export function injectTemplate(template: string, def: BrdfDef): string {
   const uniforms = uniformDecls(def.params);
-  const promote = (s: string) => (def.noPromote ? s : promoteIntLiterals(s));
+  const compat = (s: string) => escapeBuiltinFunctionRedeclarations(s);
+  const promote = (s: string) => (def.noPromote ? compat(s) : promoteIntLiterals(compat(s)));
   const brdf = `\n${promote(def.shaderSource)}\n`;
   const isFunc = def.isFuncSource ? `\n${promote(def.isFuncSource)}\n` : '';
   return template

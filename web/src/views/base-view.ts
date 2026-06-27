@@ -6,6 +6,8 @@ import { resizeToDisplay } from '../gl/renderer.js';
 import type { Store } from '../state/store.js';
 
 export abstract class BaseView {
+  protected readonly root: HTMLElement;
+  protected readonly titleEl: HTMLHeadingElement;
   readonly canvas: HTMLCanvasElement;
   readonly gl: WebGL2RenderingContext;
   /** Optional strip below the canvas for view-specific controls. */
@@ -14,14 +16,18 @@ export abstract class BaseView {
   private rafPending = false;
   private unsub: () => void;
 
-  constructor(container: HTMLElement, store: Store, title: string) {
+  constructor(container: HTMLElement, store: Store, title: string, description?: string) {
     this.store = store;
 
     const wrap = document.createElement('section');
     wrap.className = 'view';
+    this.root = wrap;
     const h = document.createElement('h2');
+    this.titleEl = h;
     h.textContent = title;
+    if (description) h.title = description;
     this.canvas = document.createElement('canvas');
+    if (description) this.canvas.title = description;
     this.footer = document.createElement('div');
     this.footer.className = 'view-controls';
     wrap.append(h, this.canvas, this.footer);
@@ -33,6 +39,12 @@ export abstract class BaseView {
 
     new ResizeObserver(() => this.requestRender()).observe(this.canvas);
     this.unsub = store.subscribe(() => this.requestRender());
+  }
+
+  protected setViewTitle(title: string, description?: string): void {
+    this.titleEl.textContent = title;
+    this.titleEl.title = description ?? '';
+    this.canvas.title = description ?? '';
   }
 
   /** Schedule a redraw on the next animation frame (coalesced). */
