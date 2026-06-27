@@ -94,8 +94,8 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
     float NdotL = dot(N, L);
     float NdotV = dot(N, V);
     if (NdotL < 0.0 || NdotV < 0.0) return vec3(0.0);
-    NdotL = clamp(NdotL, 1e-4, 1.0);
-    NdotV = clamp(NdotV, 1e-4, 1.0);
+    NdotL = clamp(NdotL, 0.0001, 1.0);
+    NdotV = clamp(NdotV, 0.0001, 1.0);
 
     vec3  H     = normalize(L + V);
     float NdotH = clamp(dot(N, H), 0.0, 1.0);
@@ -108,7 +108,7 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
 
     // ── Coat ─────────────────────────────────────────────────────────────────
     float coat_f0   = iorToF0(coat_ior);
-    float coat_a    = max(sqr(coat_roughness), 1e-4);
+    float coat_a    = max(sqr(coat_roughness), 0.0001);
     float coat_Fr   = coat_f0 + (1.0 - coat_f0) * schlick5(LdotH);
     vec3  coat_brdf = coat_weight * coat_color * coat_Fr
                     * ggxD(NdotH, HdotX, HdotY, coat_a, coat_a)
@@ -118,8 +118,8 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
 
     // ── Specular roughness -> anisotropic GGX alphas ──────────────────────────
     float aspect = sqrt(1.0 - specular_roughness_anisotropy * 0.9);
-    float ax = max(sqr(specular_roughness) / aspect, 1e-4);
-    float ay = max(sqr(specular_roughness) * aspect, 1e-4);
+    float ax = max(sqr(specular_roughness) / aspect, 0.0001);
+    float ay = max(sqr(specular_roughness) * aspect, 0.0001);
 
     // ── F0: IOR-based dielectric or tinted metallic ───────────────────────────
     float f0_dielectric = specular_weight * iorToF0(specular_ior);
