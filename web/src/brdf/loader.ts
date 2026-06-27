@@ -21,5 +21,7 @@ export async function loadBundledBrdf(fileName: string): Promise<BrdfInstance> {
   if (!res.ok) throw new Error(`failed to load ${fileName}: ${res.status}`);
   const text = await res.text();
   const name = fileName.replace(/\.brdf$/i, '');
-  return instanceFromDef(parseBrdf(name, text));
+  const def = parseBrdf(name, text);
+  def.origin = { kind: 'bundled', filename: fileName };
+  return instanceFromDef(def);
 }

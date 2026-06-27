@@ -19,8 +19,18 @@ html, body {
 
 #app {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: var(--sidebar-width, 300px) 8px 1fr;
   height: 100vh;
+}
+
+#col-resizer {
+  cursor: col-resize;
+  border-radius: 4px;
+  background: linear-gradient(to right, transparent, #4a4a4a 25%, #4a4a4a 75%, transparent);
+}
+#col-resizer:hover,
+#col-resizer:active {
+  background: linear-gradient(to right, transparent, #6aa9ff 25%, #6aa9ff 75%, transparent);
 }
 
 #sidebar {
@@ -190,10 +200,15 @@ html, body {
   text-transform: none;
   letter-spacing: 0;
 }
+.brdf-btn-group {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
 
 .ctl-row {
   display: grid;
-  grid-template-columns: 90px 1fr;
+  grid-template-columns: minmax(120px, 40%) 1fr;
   align-items: center;
   gap: 6px;
   margin: 3px 0;

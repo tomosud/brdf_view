@@ -1,4 +1,4 @@
-// Small DOM control factories. Float = slider + numeric input with Ctrl+click
+﻿// Small DOM control factories. Float = slider + numeric input with Ctrl+click
 // reset to default (matching the original's reset affordance), plus bool and
 // color controls.
 
@@ -8,6 +8,7 @@ export function labeledRow(label: string, control: HTMLElement): HTMLElement {
   const span = document.createElement('span');
   span.className = 'ctl-label';
   span.textContent = label;
+  span.title = label;
   row.append(span, control);
   return row;
 }
@@ -79,6 +80,7 @@ export function colorControl(
   const labelEl = document.createElement('span');
   labelEl.className = 'ctl-label';
   labelEl.textContent = label;
+  labelEl.title = label;
 
   const wrap = document.createElement('div');
   wrap.className = 'ctl-color';
@@ -279,3 +281,4 @@ function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
 function hsvToCss(h: number, s: number, v: number): string {
   return rgbToHex(hsvToRgb(h, s, v));
 }
+

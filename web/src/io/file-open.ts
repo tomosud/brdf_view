@@ -12,7 +12,10 @@ export async function loadBrdfFile(file: File): Promise<BrdfInstance> {
   const name = file.name.replace(/\.[^.]+$/, '');
   const ext = file.name.toLowerCase().split('.').pop();
   if (ext === 'brdf') {
-    return instanceFromDef(parseBrdf(name, await file.text()));
+    const text = await file.text();
+    const def = parseBrdf(name, text);
+    def.origin = { kind: 'text', name, content: text };
+    return instanceFromDef(def);
   }
   if (ext === 'binary') {
     return measuredBrdfFromBuffer(name, await file.arrayBuffer());

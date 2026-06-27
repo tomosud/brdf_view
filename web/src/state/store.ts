@@ -108,6 +108,15 @@ export class Store {
     }
   }
 
+  resetParams(id: string): void {
+    const b = this.state.brdfs.find((x) => x.id === id);
+    if (!b) return;
+    for (const p of b.def.params) {
+      b.values.set(p.name, Array.isArray(p.default) ? ([...p.default] as [number, number, number]) : p.default);
+    }
+    this.emit();
+  }
+
   patch(p: Partial<AppState>): void {
     Object.assign(this.state, p);
     this.emit();

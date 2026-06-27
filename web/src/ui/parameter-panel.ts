@@ -69,12 +69,24 @@ function brdfSection(store: Store, id: string): HTMLElement {
   title.textContent = inst.def.name;
   visibleLabel.append(visible, title);
 
+  const btnGroup = document.createElement('div');
+  btnGroup.className = 'brdf-btn-group';
+
+  const defaults = document.createElement('button');
+  defaults.type = 'button';
+  defaults.className = 'btn btn-close';
+  defaults.textContent = 'Defaults';
+  defaults.title = 'Reset all parameters to their default values';
+  defaults.addEventListener('click', () => store.resetParams(id));
+
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'btn btn-close';
   close.textContent = 'Close';
   close.addEventListener('click', () => store.removeBrdf(id));
-  heading.append(visibleLabel, close);
+
+  btnGroup.append(defaults, close);
+  heading.append(visibleLabel, btnGroup);
 
   if (!inst.visible) return s;
 

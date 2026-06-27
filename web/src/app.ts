@@ -14,6 +14,7 @@ import { ImageSliceView } from './views/image-slice.js';
 import { parseHdr } from './io/hdr.js';
 import { PlotPolarView } from './views/plot-polar.js';
 import { PlotCartesianView } from './views/plot-cartesian.js';
+import { scheduleSave, restoreSession } from './state/persist.js';
 
 function fatal(message: string): void {
   const el = document.getElementById('fatal')!;
@@ -71,17 +72,24 @@ async function main(): Promise<void> {
 
   wireFileLoading(store, views);
   void wireSampleBrdfs(store);
+  wireColResizer();
 
-  // Seed with lambert and disney.
-  for (const file of ['lambert.brdf', 'disney.brdf']) {
-    try {
-      const inst = await loadBundledBrdf(file);
-      if (file !== 'lambert.brdf') inst.visible = false; // start with one visible
-      store.addBrdf(inst, inst.visible);
-    } catch (e) {
-      console.error(e);
+  // Restore previous session from IndexedDB; fall back to seeding defaults.
+  const restored = await restoreSession(store);
+  if (!restored) {
+    for (const file of ['lambert.brdf', 'disney.brdf']) {
+      try {
+        const inst = await loadBundledBrdf(file);
+        if (file !== 'lambert.brdf') inst.visible = false;
+        store.addBrdf(inst, inst.visible);
+      } catch (e) {
+        console.error(e);
+      }
     }
   }
+
+  // Begin persisting after initial load to avoid saving during restore.
+  store.subscribe(() => scheduleSave(store));
 }
 
 function mountViewRows(views: HTMLElement): { top: HTMLElement; bottom: HTMLElement } {
@@ -114,6 +122,33 @@ function mountViewRows(views: HTMLElement): { top: HTMLElement; bottom: HTMLElem
   });
 
   return { top, bottom };
+}
+
+function wireColResizer(): void {
+  const app = document.getElementById('app')!;
+  const resizer = document.getElementById('col-resizer')!;
+
+  // Restore saved width from localStorage.
+  const saved = localStorage.getItem('sidebarWidth');
+  if (saved) app.style.setProperty('--sidebar-width', `${saved}px`);
+
+  resizer.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    resizer.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      const rect = app.getBoundingClientRect();
+      const width = Math.max(180, Math.min(700, ev.clientX - rect.left));
+      app.style.setProperty('--sidebar-width', `${width}px`);
+      localStorage.setItem('sidebarWidth', String(width));
+    };
+    const up = (ev: PointerEvent) => {
+      resizer.releasePointerCapture(ev.pointerId);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
 }
 
 function wireFileLoading(store: Store, dropTarget: HTMLElement): void {
