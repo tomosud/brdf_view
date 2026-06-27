@@ -6,6 +6,7 @@ import type { Store } from './store.js';
 import { loadBundledBrdf, instanceFromDef } from '../brdf/loader.js';
 import { parseBrdf } from '../brdf/parser.js';
 import type { ParamValue } from '../brdf/types.js';
+import { linearToSrgbRgb } from '../ui/color-space.js';
 
 const DB_NAME = 'brdf-explorer';
 const DB_VERSION = 1;
@@ -22,6 +23,7 @@ interface SavedBrdf {
 }
 
 interface SavedSession {
+  colorSpace?: 'linear' | 'srgb';
   brdfs: SavedBrdf[];
 }
 
@@ -73,7 +75,7 @@ async function saveSession(store: Store): Promise<void> {
   }
   try {
     const d = await getDb();
-    await idbPut(d, SESSION_KEY, { brdfs } satisfies SavedSession);
+    await idbPut(d, SESSION_KEY, { colorSpace: 'srgb', brdfs } satisfies SavedSession);
   } catch (e) {
     console.warn('IndexedDB save failed', e);
   }
@@ -121,7 +123,13 @@ export async function restoreSession(store: Store): Promise<boolean> {
       }
       // Apply saved parameter values
       for (const [k, v] of Object.entries(saved.values)) {
-        if (inst.values.has(k)) inst.values.set(k, v);
+        const param = inst.def.params.find((p) => p.name === k);
+        if (!param || !inst.values.has(k)) continue;
+        if (session.colorSpace === 'linear' && param.kind === 'color' && Array.isArray(v)) {
+          inst.values.set(k, linearToSrgbRgb(v as [number, number, number]));
+        } else {
+          inst.values.set(k, v);
+        }
       }
       inst.visible = saved.visible;
       store.addBrdf(inst, false); // preserve saved visibility; don't auto-solo

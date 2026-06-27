@@ -232,7 +232,7 @@ html, body {
 .color-popover {
   position: fixed;
   z-index: 1000;
-  width: 236px;
+  width: 308px;
   padding: 8px;
   border: 1px solid #555;
   border-radius: 4px;
@@ -277,19 +277,30 @@ html, body {
   border-radius: 999px;
   background: linear-gradient(to right, red, yellow, lime, cyan, blue, magenta, red);
 }
-.color-rgb-grid {
+.color-fields {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  gap: 4px;
 }
-.color-rgb-grid label {
+.color-channel-head,
+.color-field-row {
   display: grid;
-  gap: 3px;
-  text-align: center;
+  grid-template-columns: 48px repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  align-items: center;
+}
+.color-channel-head {
   color: var(--text);
   font-size: 11px;
+  text-align: center;
 }
-.color-rgb-grid input {
+.color-channel-head span:first-child {
+  text-align: left;
+}
+.color-space-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+.color-field-row input {
   width: 100%;
   min-width: 0;
   padding: 4px;
@@ -299,9 +310,26 @@ html, body {
 }
 .color-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 6px;
   margin-top: 8px;
+}
+.color-action-right {
+  display: flex;
+  gap: 6px;
+}
+.color-pick-button {
+  width: 28px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+}
+.color-pick-button svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
 }
 .btn-compact {
   padding: 3px 5px;
