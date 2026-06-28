@@ -1,5 +1,5 @@
 // Cartesian angle plot. Port of Disney PlotCartesianWidget's Theta V / Theta H /
-// Theta D / Albedo modes: x is the selected angle in [-pi/2, pi/2], y is BRDF value.
+// Theta D modes: x is the selected angle in [-pi/2, pi/2], y is BRDF value.
 // Left-drag pans, right-drag zooms, Ctrl+drag changes x/y scale, double-click
 // resets.
 
@@ -8,27 +8,17 @@ import { BrdfProgramCache } from '../gl/brdf-program.js';
 import { Line2D } from '../gl/line2d.js';
 import { createEmptyVAO } from '../gl/line-expansion.js';
 import { ortho, scale, mul, type Mat4 } from '../gl/mat4.js';
-import { boolControl, floatControl, labeledRow, selectControl } from '../ui/controls.js';
+import { boolControl, floatControl, selectControl } from '../ui/controls.js';
 import type { Store } from '../state/store.js';
 
 const SEGMENTS = 512;
-const ALBEDO_SEGMENTS = 32;
 
-type CartesianMode = 'thetaV' | 'thetaH' | 'thetaD' | 'albedo';
+type CartesianMode = 'thetaV' | 'thetaH' | 'thetaD';
 
 const MODE_OPTIONS: { value: CartesianMode; text: string }[] = [
   { value: 'thetaV', text: 'Theta V' },
   { value: 'thetaH', text: 'Theta H' },
   { value: 'thetaD', text: 'Theta D' },
-  { value: 'albedo', text: 'ALBEDO' },
-];
-
-const SAMPLING_OPTIONS = [
-  { value: '0', text: 'Cosine Sampling' },
-  { value: '1', text: 'Uniform Sampling' },
-  { value: '2', text: 'Polar Sampling' },
-  { value: '3', text: 'BlinnPhong Sampling' },
-  { value: '4', text: 'M.I. Sampling' },
 ];
 
 const MODE_DESCRIPTIONS: Record<CartesianMode, string> = {
@@ -38,15 +28,12 @@ const MODE_DESCRIPTIONS: Record<CartesianMode, string> = {
     'Theta H: BRDF value versus half-vector angle thetaH while thetaD is fixed. This shows the lobe around the mirror/half-vector direction.',
   thetaD:
     'Theta D: BRDF value versus difference angle thetaD while thetaH is fixed. This shows falloff as light/view separate around a fixed half-vector.',
-  albedo:
-    'ALBEDO: hemispherical reflectance estimate versus incident theta. This is a Monte Carlo integration and is intentionally lower resolution than the angle slices.',
 };
 
 const MODE_INDEX: Record<CartesianMode, number> = {
   thetaV: 0,
   thetaH: 1,
   thetaD: 2,
-  albedo: 3,
 };
 
 export class PlotCartesianView extends BaseView {
@@ -62,9 +49,6 @@ export class PlotCartesianView extends BaseView {
   private mode: CartesianMode = 'thetaV';
   private phiV = 0.0;
   private angleParam = 0.0;
-  private nSamples = 2500;
-  private samplingMode = 4;
-  private albedoBoostFrames = 0;
   private lockPhiV = true;
   private syncUnsub: (() => void) | null = null;
 
@@ -170,40 +154,6 @@ export class PlotCartesianView extends BaseView {
           'Fixed half-vector angle in degrees. The x-axis sweeps thetaD.',
         ),
       );
-    } else {
-      controls.push(
-        floatControl(
-          'Samples',
-          this.nSamples,
-          1000,
-          10000,
-          2500,
-          (v) => {
-            this.nSamples = Math.round(v);
-            this.requestRender();
-          },
-          'Base Monte Carlo sample count per incident angle. Resample x10 temporarily multiplies this for one redraw.',
-        ),
-        buttonControl(
-          'Resample',
-          'x10',
-          () => {
-            this.albedoBoostFrames = 1;
-            this.requestRender();
-          },
-          'Render the ALBEDO estimate once with ten times the current sample count.',
-        ),
-        selectControl(
-          'Sampling',
-          SAMPLING_OPTIONS,
-          String(this.samplingMode),
-          (v) => {
-            this.samplingMode = Number(v);
-            this.requestRender();
-          },
-          'Monte Carlo sampling strategy for ALBEDO. M.I. Sampling matches Disney default.',
-        ),
-      );
     }
 
     this.footer.replaceChildren(...controls);
@@ -232,12 +182,7 @@ export class PlotCartesianView extends BaseView {
     const h = this.canvas.height;
     gl.clearColor(1, 1, 1, 1);
     gl.disable(gl.DEPTH_TEST);
-    if (this.mode === 'albedo') {
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    } else {
-      gl.disable(gl.BLEND);
-    }
+    gl.disable(gl.BLEND);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     if (w === 0 || h === 0) return;
 
@@ -262,14 +207,10 @@ export class PlotCartesianView extends BaseView {
       prog.u.m4('projectionMatrix', proj);
       prog.u.m4('modelViewMatrix', mv);
       prog.u.v3('incidentVector', iv[0], iv[1], iv[2]);
-      prog.u.f('incidentPhi', s.incidentPhi);
       prog.u.f('phiV', this.phiV);
       prog.u.f('angleParam', this.angleParam);
       prog.u.i('plotMode', MODE_INDEX[this.mode]);
-      prog.u.i('segmentCount', this.mode === 'albedo' ? ALBEDO_SEGMENTS : SEGMENTS);
-      prog.u.i('nSamples', Math.max(1, Math.round(this.nSamples)));
-      prog.u.f('sampleMultOn', this.albedoBoostFrames > 0 ? 1 : 0);
-      prog.u.i('samplingMode', this.samplingMode);
+      prog.u.i('segmentCount', SEGMENTS);
       prog.u.f('useLogPlot', s.useLogPlot ? 1 : 0);
       prog.u.f('useNDotL', s.useNDotL ? 1 : 0);
       prog.u.v3('colorMask', pkg.colorMask[0], pkg.colorMask[1], pkg.colorMask[2]);
@@ -277,13 +218,9 @@ export class PlotCartesianView extends BaseView {
       prog.u.f('thickness', 3);
       prog.u.v3('drawColor', pkg.drawColor[0], pkg.drawColor[1], pkg.drawColor[2]);
       this.cache.applyParams(prog.u, pkg.instance);
-      const segmentCount = this.mode === 'albedo' ? ALBEDO_SEGMENTS : SEGMENTS;
-      gl.drawArrays(gl.TRIANGLES, 0, segmentCount * 6);
+      gl.drawArrays(gl.TRIANGLES, 0, SEGMENTS * 6);
     }
     gl.bindVertexArray(null);
-    if (this.albedoBoostFrames > 0) {
-      this.albedoBoostFrames = 0;
-    }
   }
 
   private drawGrid(projMv: Mat4): void {
@@ -366,21 +303,6 @@ export class PlotCartesianView extends BaseView {
     this.syncUnsub?.();
     super.dispose();
   }
-}
-
-function buttonControl(
-  label: string,
-  text: string,
-  onClick: () => void,
-  description?: string,
-): HTMLElement {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'btn btn-compact';
-  button.textContent = text;
-  if (description) button.title = description;
-  button.addEventListener('click', onClick);
-  return labeledRow(label, button, description);
 }
 
 function degToRad(degrees: number): number {
