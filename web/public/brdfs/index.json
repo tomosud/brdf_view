@@ -38,6 +38,7 @@
   "showAngles.brdf",
   "showVectors.brdf",
   "stretchedphong.brdf",
+  "substrate.brdf",
   "walter.brdf",
   "ward.brdf"
 ]

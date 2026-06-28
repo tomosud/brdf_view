@@ -60,6 +60,14 @@ https://github.com/tomosud/brdf_view/releases/tag/brdf-runtime-v0.1.0
 
 Web版の表示確認や挙動比較に使えます。
 
+## 検証中のBRDFについて
+
+以下のBRDFは現在検証中であり、実装や近似が各仕様・参照実装と完全に一致しているとは限りません。表示結果が正しいとは限らないため、比較・確認用として扱ってください。
+
+- `sample/brdf/disney.brdf`
+- `sample/brdf/openpbr.brdf`
+- `sample/brdf/substrate.brdf`
+
 ## 独自追加 BRDF
 
 ### OpenPBR Surface (`openpbr.brdf`)
