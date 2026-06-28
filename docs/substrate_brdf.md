@@ -1,109 +1,55 @@
-# Unreal Engine 5 Substrate BRDF notes
+# Unreal Substrate Slab BRDF
 
-This note documents [`sample/brdf/substrate.brdf`](../sample/brdf/substrate.brdf).
+対象ファイル: `sample/brdf/substrate.brdf`
 
-The file is a validation implementation, not a complete Unreal renderer port.
-It should be read as:
+このファイルは Unreal Substrate Slab の不透明direct lighting近似。
+完全なSubstrate実装ではない。
 
-> UE5 Substrate opaque Slab direct-lighting, approximated inside the local
-> `.brdf` contract `BRDF(L,V,N,X,Y)`.
-
-## Sources checked
-
-Local Unreal shader sources:
-
-- `C:\work\unreal\Shaders\Private\Substrate\Substrate.ush`
-- `C:\work\unreal\Shaders\Private\Substrate\SubstrateEvaluation.ush`
-- `C:\work\unreal\Shaders\Private\BRDF.ush`
-- `C:\work\unreal\Shaders\Private\ShadingCommon.ush`
-- `C:\work\unreal\Shaders\Private\ShadingEnergyConservation.ush`
-- `C:\work\unreal\Shaders\Private\ShadingEnergyConservationTemplate.ush`
-
-Public Unreal documentation:
-
-- https://dev.epicgames.com/documentation/en-us/unreal-engine/overview-of-substrate-materials-in-unreal-engine
-- https://dev.epicgames.com/documentation/en-us/unreal-engine/substrate-materials-in-unreal-engine
-
-## Scope
-
-The viewer calls a single local function:
+このツールで計算するのは次のローカル関数だけ。
 
 ```glsl
 vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y)
 ```
 
-The implementation therefore includes only local direct-lighting terms. It cannot
-represent full Substrate graph evaluation, renderer storage, material topology,
-or non-local integration.
+ライトの強さ、ライト色、距離減衰、影、環境光、LUT、テクスチャ読み出し、
+マテリアルグラフ、GBuffer、path tracingは扱わない。
 
-## Parameters
+`color` パラメータはファイル内で `pow(color, 2.2)` によりリニア化する。
 
-| Parameter | Meaning |
-|---|---|
-| `diffuse_albedo` | Slab diffuse albedo, stored as sRGB UI color and converted to linear. |
-| `f0` | Specular F0 color, stored as sRGB UI color and converted to linear. Default `0.23` is about linear `0.04`. |
-| `f90` | Edge tint before UE-style max-RGB normalization and F0 micro-occlusion. |
-| `roughness` | Primary perceptual roughness. |
-| `anisotropy` | Anisotropic GGX directionality. Positive and negative values swap the stretched tangent axis. |
-| `second_roughness` | Secondary roughness used as Haziness-like secondary lobe. |
-| `second_roughness_weight` | Blend/weight for the secondary lobe. |
-| `second_roughness_as_clearcoat` | Uses a simplified clearcoat-like secondary lobe with F0=0.04 and F90=1. |
-| `fuzz_amount` | Adds a cloth/sheen-like fuzz lobe and attenuates lower lobes. |
-| `fuzz_color` | Fuzz F0 color, stored as sRGB UI color and converted to linear. |
-| `fuzz_roughness` | Fuzz roughness. |
+## パラメータ
 
-## Implemented mapping
+| パラメータ | 範囲 / 既定値 | 内容と実装 |
+|---|---:|---|
+| `diffuse_albedo` | color / `.46 .46 .46` | 拡散色。EON diffuseに使う。 |
+| `f0` | color / `.23 .23 .23` | 主スペキュラF0。リニア化して使う。既定値はリニアで約0.04。 |
+| `f90` | color / `1 1 1` | grazing色。最大RGBで正規化し、F0由来のmicro-occlusionを掛ける。 |
+| `roughness` | `0..1` / `.45` | 主GGX粗さ。最小値 `0.001` に丸める。 |
+| `anisotropy` | `-1..1` / `0` | 主GGXの異方性。符号でX/Y方向を入れ替える。 |
+| `second_roughness` | `0..1` / `.85` | 2つ目のスペキュラlobeの粗さ。 |
+| `second_roughness_weight` | `0..1` / `0` | 主lobeと2つ目のlobeの混合量。 |
+| `second_roughness_as_clearcoat` | bool / `0` | `1` で2つ目のlobeを簡易clearcoatとして扱う。 |
+| `fuzz_amount` | `0..1` / `0` | fuzz lobeの重み。下層も減衰する。 |
+| `fuzz_color` | color / `1 1 1` | fuzz FresnelのF0。 |
+| `fuzz_roughness` | `0..1` / `.7` | fuzz粗さ。最小値 `0.05` に丸める。 |
 
-| UE / Substrate concept | Local implementation |
-|---|---|
-| Slab specular | GGX or anisotropic GGX. |
-| NDF | UE-style `D_GGX` / `D_GGXaniso`. |
-| Visibility | UE-style `Vis_SmithJoint` / `Vis_SmithJointAniso`. |
-| Fresnel | Generalized Schlick using F0 and F90. |
-| F90 handling | Normalize F90 by max RGB, then multiply by `F0RGBToMicroOcclusion(F0)`. |
-| Specular energy | Analytic GGX energy approximation from UE's energy-conservation shader path. |
-| Diffuse | UE-style EON rough diffuse approximation, called with `roughness * 0.4`. |
-| Haziness / SecondRoughness | Secondary GGX lobe approximation. |
-| Clearcoat-like second lobe | Simplified top lobe path controlled by `second_roughness_as_clearcoat`. |
-| Fuzz | Deprecated Charlie/Ashikhmin-style fallback plus lower-lobe attenuation. |
+## 実装
 
-## Important differences from full UE
+- 主スペキュラ: GGX、generalized Schlick、joint Smith visibility。
+- 異方性: `anisotropy` の符号でalpha方向を変える。
+- エネルギー補正: 解析近似でスペキュラを補正し、拡散透過量を作る。
+- 拡散: rough diffuse。主スペキュラの残りとして減衰する。
+- second roughness: 2つ目のGGX lobeとして混合する。
+- clearcoat扱い: 有効時はF0=0.04の上層として簡易合成する。
+- fuzz: Charlie NDF、Ashikhmin visibility、簡易directional albedoで下層を減衰する。
 
-- UE's current fuzz path can use Sheen LTC textures. This `.brdf` uses the older
-  Charlie/Ashikhmin fallback because the viewer has no LTC texture.
-- UE can use precomputed energy LUT textures. This file uses the analytic
-  approximation path only.
-- Area-light LTCs, rect/capsule light handling, glints, and specular profile LUTs
-  are not included.
-- SSS/MFP, transmission, thin surfaces, and rough refraction are not included.
-- Substrate graph topology, simplification, packed closure storage, and deferred
-  renderer integration are not included.
-- Clearcoat-like Haziness is simplified and does not fully reproduce bottom normal
-  handling or UE `SimpleClearCoatTransmittance`.
-- Path tracing paths are out of scope.
+## 省略
 
-## Color parameter note
+- Substrate graph topology、closure packing、simplification: この関数では扱えない。
+- MFP、SSS、thin surface、transmission、rough refraction: ローカルBRDFでは扱えない。
+- LUT、area light、glints、specular profile、path tracing: このツールでは扱わない。
+- clearcoat時のbottom normalや厳密な透過: この実装では簡易化。
 
-The app stores `color` parameters as sRGB UI values. The BRDF converts them with
-`pow(color, 2.2)` inside the shader.
+## 現状
 
-Examples:
-
-- `f0 = 0.23 0.23 0.23` evaluates to about linear `0.04`.
-- `diffuse_albedo = 0.46 0.46 0.46` evaluates to about linear `0.18`.
-
-## Validation status
-
-Still under validation. Before using it as a reference, compare against simple UE
-Substrate Slab materials:
-
-- dielectric Slab
-- colored F0
-- colored F90
-- high roughness diffuse/specular
-- Haziness / SecondRoughness
-- clearcoat-like Haziness
-- fuzz
-
-The goal is not full UE parity; the goal is to match the local pixel-level terms
-that can reasonably fit in `.brdf`.
+Substrate Slabのローカル近似として使う。
+エンジン全体のSubstrateとは一致しない。

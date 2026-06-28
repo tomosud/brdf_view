@@ -1,82 +1,52 @@
-# Unreal legacy PBR BRDF notes
+# Unreal legacy Default Lit BRDF
 
-This note documents
-[`sample/brdf/unreal_legacy_pbr.brdf`](../sample/brdf/unreal_legacy_pbr.brdf).
+対象ファイル: `sample/brdf/unreal_legacy_pbr.brdf`
 
-The target is Unreal Engine's legacy, non-Substrate `DefaultLitBxDF`, reduced to
-the local `.brdf` function:
+このファイルは Unreal Engine の非Substrate Default Litに近いローカルBRDF。
+完全なUnrealレンダラ実装ではない。
+
+このツールで計算するのは次のローカル関数だけ。
 
 ```glsl
 vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y)
 ```
 
-## Sources checked
+ライトの強さ、ライト色、距離減衰、影、環境光、LUT、テクスチャ読み出し、
+GBuffer、renderer view overrideは扱わない。
+`NoL` の外側乗算もこの関数の外とする。
 
-Local Unreal shader sources:
+`color` パラメータはファイル内で `pow(color, 2.2)` によりリニア化する。
 
-- `C:\work\unreal\Shaders\Private\ShadingModels.ush`
-  - `DefaultLitBxDF`
-  - `SpecularGGX`
-- `C:\work\unreal\Shaders\Private\BRDF.ush`
-  - `Diffuse_Lambert`
-  - `Diffuse_GGX_Rough`
-  - `D_GGX`
-  - `D_GGXaniso`
-  - `Vis_SmithJointApprox`
-  - `Vis_SmithJointAniso`
-  - `F_Schlick`
-- `C:\work\unreal\Shaders\Private\ShadingCommon.ush`
-  - `ComputeF0`
-  - `ComputeDiffuseAlbedo`
-  - `F0RGBToMicroOcclusion`
-- `C:\work\unreal\Shaders\Private\ShadingEnergyConservation.ush`
-  - optional analytic GGX energy path
+## パラメータ
 
-## Scope
+| パラメータ | 範囲 / 既定値 | 内容と実装 |
+|---|---:|---|
+| `base_color` | color / `.82 .67 .16` | ベース色。拡散色と金属F0に使う。 |
+| `metallic` | `0..1` / `0` | 拡散色を `base * (1 - metallic)` にし、F0をbase色へ寄せる。 |
+| `specular` | `0..1` / `.5` | 誘電体F0。`0.08 * specular` として使う。 |
+| `roughness` | `0..1` / `.5` | GGX粗さ。最小値 `0.001` に丸める。 |
+| `anisotropy` | `-0.99..0.99` / `0` | 異方性GGXに切り替える。0付近では等方GGX。 |
+| `rough_diffuse` | bool / `0` | `0` はLambert、`1` はEON系のrough diffuse。 |
+| `energy_conservation` | bool / `0` | `1` で解析近似のGGXエネルギー補正を使う。 |
 
-The implementation is the local direct-lighting BRDF part of legacy Default Lit.
-It omits:
+## 実装
 
-- light falloff, light color, shadows, and `NoL` multiplication
-- `SphereMaxNoH` and punctual/area light shape widening
-- rect light LTC
-- IBL preintegrated GF
-- clear coat, cloth, hair, eye, subsurface, two-sided foliage, transmission
-- GBuffer packing and renderer view overrides
+- F0: `mix(vec3(0.08 * specular), base_color, metallic)`。
+- 拡散色: `base_color * (1 - metallic)`。
+- 拡散: Lambert、またはrough diffuse。
+- スペキュラ: GGX NDF、joint Smith visibility、Schlick Fresnel。
+- Fresnel: F0が低い場合はgrazing項にmicro-occlusionが掛かる。
+- 異方性: `anisotropy` が0でない場合だけ異方性GGXを使う。
+- energy conservation: 有効時はスペキュラを増やし、拡散を減らす解析近似。
 
-## Parameters
+## 省略
 
-| Parameter | Meaning |
-|---|---|
-| `base_color` | UE material Base Color, stored as sRGB UI color and converted to linear. |
-| `metallic` | UE material Metallic. |
-| `specular` | UE material Specular. Dielectric F0 is `0.08 * specular`. |
-| `roughness` | UE perceptual roughness. |
-| `anisotropy` | Optional anisotropic GGX path. Default is 0, matching ordinary Default Lit. |
-| `rough_diffuse` | Optional `MATERIAL_ROUGHDIFFUSE` path. Default off, matching the common legacy path. |
-| `energy_conservation` | Optional analytic energy conservation/preservation path. Default off because legacy material energy conservation is project/platform controlled and off by default for non-Substrate paths in the checked source. |
+- clear coat、cloth、hair、eye、subsurface、two-sided foliage、transmission: 別モデルなので省略。
+- light shape widening、rect light、area light、IBL: このツールでは扱わない。
+- ライト減衰、ライト色、影、`NoL` 乗算: この関数の外。
+- GBuffer packing、renderer view override: この関数では扱わない。
 
-## Implemented mapping
+## 現状
 
-| UE behavior | Local implementation |
-|---|---|
-| `ComputeF0(Specular, BaseColor, Metallic)` | `mix(vec3(0.08 * specular), base_color, metallic)` after sRGB-to-linear conversion. |
-| `ComputeDiffuseAlbedo(BaseColor, Metallic)` | `base_color * (1 - metallic)`. |
-| Default diffuse | `Diffuse_Lambert`. |
-| Optional rough diffuse | `Diffuse_GGX_Rough` version 3, using UE's EON-style approximation. |
-| Isotropic specular | `D_GGX * Vis_SmithJointApprox * F_Schlick`. |
-| Anisotropic specular | `D_GGXaniso * Vis_SmithJointAniso * F_Schlick`. |
-| UE Schlick Fresnel | Includes F0 micro-occlusion: grazing term is `F0RGBToMicroOcclusion(F0)`, not always white. |
-| Optional energy path | Analytic `USE_ENERGY_CONSERVATION == 2` approximation. |
-
-## Validation status
-
-This is under validation. It should be compared against UE legacy Default Lit
-with simple punctual lights and material values:
-
-- dielectric, `specular = 0.5`, `metallic = 0`
-- metallic, `metallic = 1`
-- low F0 / low specular to check micro-occlusion behavior
-- roughness sweep
-- anisotropy sweep
-- optional `rough_diffuse` and `energy_conservation` toggles
+Default Litの比較用として使う。
+数値一致は未保証。
