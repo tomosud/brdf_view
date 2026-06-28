@@ -401,6 +401,33 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.image-slice-sample-marker {
+  position: absolute;
+  z-index: 2;
+  width: 15px;
+  height: 15px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.image-slice-sample-marker::before,
+.image-slice-sample-marker::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: #ff2020;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 22%);
+  transform: translate(-50%, -50%);
+}
+.image-slice-sample-marker::before {
+  width: 3px;
+  height: 15px;
+}
+.image-slice-sample-marker::after {
+  width: 15px;
+  height: 3px;
+}
 
 #shader-log {
   grid-column: 1 / -1;

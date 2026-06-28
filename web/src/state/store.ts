@@ -51,7 +51,7 @@ export class Store {
     brdfs: [],
     drawColors: new Map(),
     channel: 'luminance',
-    useLogPlot: false,
+    useLogPlot: true,
     useNDotL: false,
     incidentTheta: 0.785398163,
     incidentPhi: 0.785398163,

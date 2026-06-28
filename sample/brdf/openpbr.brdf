@@ -7,7 +7,7 @@ analytic
 # Omitted (require BSDF/volume): transmission, subsurface, emission
 
 ::begin parameters
-color base_color 0.18 0.18 0.18
+color base_color 0.45882353 0.45882353 0.45882353
 float base_weight 0.0 1.0 1.0
 float base_diffuse_roughness 0.0 1.0 0.0
 float base_metalness 0.0 1.0 0.0

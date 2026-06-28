@@ -14,10 +14,10 @@ analytic
 #   topology, simplification, deferred storage, and path tracing.
 
 ::begin parameters
-color diffuse_albedo 0.46 0.46 0.46
+color diffuse_albedo 0.45882353 0.45882353 0.45882353
 color f0 0.23 0.23 0.23
 color f90 1.0 1.0 1.0
-float roughness 0.0 1.0 0.45
+float roughness 0.0 1.0 0.3
 float anisotropy -1.0 1.0 0.0
 float second_roughness 0.0 1.0 0.85
 float second_roughness_weight 0.0 1.0 0.0
@@ -60,11 +60,6 @@ float f0RGBToMicroOcclusion(vec3 F0) {
     return saturate(50.0 * max3(F0));
 }
 
-vec3 normalizeF90(vec3 edgeColor) {
-    float m = max3(edgeColor);
-    return m > 0.0 ? edgeColor / m : vec3(1.0);
-}
-
 vec3 fresnelSchlick(float VoH, vec3 F0, vec3 F90) {
     float Fc = schlick5(VoH);
     return F90 * Fc + (1.0 - Fc) * F0;
@@ -78,14 +73,8 @@ vec3 fresnelSchlickMicroOcclusion(float VoH, vec3 F0) {
 
 void anisotropicRoughness(float perceptualRoughness, float aniso, out float ax, out float ay) {
     float alpha = sqr(perceptualRoughness);
-    float aspect = sqrt(max(0.1, 1.0 - abs(aniso) * 0.9));
-    if (aniso >= 0.0) {
-        ax = alpha / aspect;
-        ay = alpha * aspect;
-    } else {
-        ax = alpha * aspect;
-        ay = alpha / aspect;
-    }
+    ax = max(alpha * (1.0 + aniso), MIN_GGX_ROUGHNESS);
+    ay = max(alpha * (1.0 - aniso), MIN_GGX_ROUGHNESS);
 }
 
 float dGGX(float alpha2, float NoH) {
@@ -195,7 +184,7 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
 
     vec3 diffuseColor = saturate(mon2lin(diffuse_albedo));
     vec3 F0 = saturate(mon2lin(f0));
-    vec3 F90 = normalizeF90(saturate(mon2lin(f90))) * f0RGBToMicroOcclusion(F0);
+    vec3 F90 = saturate(mon2lin(f90)) * f0RGBToMicroOcclusion(F0);
     vec3 fuzzF0 = saturate(mon2lin(fuzz_color));
 
     vec3 preserve0;

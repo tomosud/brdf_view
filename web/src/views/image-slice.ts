@@ -21,6 +21,11 @@ interface SliceTarget {
   floatBacked: boolean;
 }
 
+interface SamplePoint {
+  u: number;
+  v: number;
+}
+
 export class ImageSliceView extends BaseView {
   private rawCache: BrdfProgramCache;
   private surfaceCache: BrdfProgramCache;
@@ -30,6 +35,8 @@ export class ImageSliceView extends BaseView {
   private floatTarget = false;
   private mode: 'image' | 'surface' = 'image';
   private readout: HTMLElement | null = null;
+  private sampleMarker: HTMLElement;
+  private pinnedSample: SamplePoint | null = null;
 
   private phiDdeg = 90;
   private gamma = 2.2;
@@ -46,6 +53,10 @@ export class ImageSliceView extends BaseView {
     this.vao = createEmptyVAO(gl);
     const displayProgram = buildProgram(gl, DISPLAY_VERT, DISPLAY_FRAG, 'imageSliceDisplay');
     this.display = { program: displayProgram, u: new Uniforms(gl, displayProgram) };
+    this.sampleMarker = document.createElement('div');
+    this.sampleMarker.className = 'image-slice-sample-marker';
+    this.sampleMarker.hidden = true;
+    this.root.append(this.sampleMarker);
     this.buildControls();
     this.setupReadout();
     this.rawCache = new BrdfProgramCache(gl, 'imageSlice.vert', 'imageSliceRaw.frag', 'SliceRaw');
@@ -67,16 +78,25 @@ export class ImageSliceView extends BaseView {
     gl.clearColor(0.5, 0.5, 0.5, 1);
     gl.disable(gl.DEPTH_TEST);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    if (w === 0 || h === 0) return;
+    if (w === 0 || h === 0) {
+      this.clearSampleDisplay();
+      return;
+    }
 
     // centered square viewport so the slice stays square regardless of aspect
     const s = Math.min(w, h);
     this.ensureTarget(s);
 
     const pkg = this.store.topmostEnabled();
-    if (!pkg) return;
+    if (!pkg) {
+      this.clearSampleDisplay();
+      return;
+    }
     const prog = this.rawCache.get(pkg.instance.def);
-    if (!prog) return;
+    if (!prog) {
+      this.clearSampleDisplay();
+      return;
+    }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.target!.framebuffer);
     gl.viewport(0, 0, s, s);
@@ -104,9 +124,11 @@ export class ImageSliceView extends BaseView {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
     gl.viewport(0, 0, w, h);
+    this.refreshPinnedSample();
   }
 
   private drawSurface(): void {
+    this.sampleMarker.hidden = true;
     const gl = this.gl;
     const w = this.canvas.width;
     const h = this.canvas.height;
@@ -221,7 +243,14 @@ export class ImageSliceView extends BaseView {
   private setupReadout(): void {
     this.canvas.addEventListener('pointermove', (e) => this.updateReadout(e));
     this.canvas.addEventListener('pointerleave', () => {
-      if (this.readout) this.readout.textContent = this.floatTarget ? '-' : 'unavailable';
+      if (this.readout && !this.pinnedSample) this.readout.textContent = this.floatTarget ? '-' : 'unavailable';
+    });
+    this.canvas.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || this.mode !== 'image') return;
+      const point = this.eventToSamplePoint(e);
+      if (!point) return;
+      this.pinnedSample = point;
+      this.refreshPinnedSample();
     });
     this.canvas.addEventListener(
       'wheel',
@@ -237,7 +266,34 @@ export class ImageSliceView extends BaseView {
   }
 
   private updateReadout(e: PointerEvent): void {
-    if (!this.readout || !this.target || this.mode !== 'image') return;
+    if (this.pinnedSample || !this.readout || this.mode !== 'image') return;
+    const point = this.eventToSamplePoint(e);
+    if (!point) {
+      this.readout.textContent = '-';
+      return;
+    }
+    this.readSample(point);
+  }
+
+  private refreshPinnedSample(): void {
+    if (this.mode !== 'image') {
+      this.sampleMarker.hidden = true;
+      return;
+    }
+    if (!this.pinnedSample) {
+      this.sampleMarker.hidden = true;
+      return;
+    }
+    this.updateSampleMarker();
+    this.readSample(this.pinnedSample);
+  }
+
+  private clearSampleDisplay(): void {
+    this.sampleMarker.hidden = true;
+    if (this.readout) this.readout.textContent = this.floatTarget ? '-' : 'unavailable';
+  }
+
+  private eventToSamplePoint(e: PointerEvent): SamplePoint | null {
     const rect = this.canvas.getBoundingClientRect();
     const dprX = this.canvas.width / rect.width;
     const dprY = this.canvas.height / rect.height;
@@ -247,12 +303,19 @@ export class ImageSliceView extends BaseView {
     const vx = (this.canvas.width - s) * 0.5;
     const vy = (this.canvas.height - s) * 0.5;
     if (px < vx || py < vy || px >= vx + s || py >= vy + s) {
-      this.readout.textContent = '-';
-      return;
+      return null;
     }
 
-    const x = Math.max(0, Math.min(this.target.width - 1, Math.floor(px - vx)));
-    const y = Math.max(0, Math.min(this.target.height - 1, Math.floor(s - 1 - (py - vy))));
+    return {
+      u: Math.max(0, Math.min(1, (px - vx) / s)),
+      v: Math.max(0, Math.min(1, 1 - (py - vy) / s)),
+    };
+  }
+
+  private readSample(point: SamplePoint): void {
+    if (!this.readout || !this.target || this.mode !== 'image') return;
+    const x = Math.max(0, Math.min(this.target.width - 1, Math.floor(point.u * this.target.width)));
+    const y = Math.max(0, Math.min(this.target.height - 1, Math.floor(point.v * this.target.height)));
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.target.framebuffer);
     if (this.target.floatBacked) {
@@ -266,12 +329,33 @@ export class ImageSliceView extends BaseView {
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
+
+  private updateSampleMarker(): void {
+    if (!this.pinnedSample || this.mode !== 'image') {
+      this.sampleMarker.hidden = true;
+      return;
+    }
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const rootRect = this.root.getBoundingClientRect();
+    const s = Math.min(canvasRect.width, canvasRect.height);
+    const vx = (canvasRect.width - s) * 0.5;
+    const vy = (canvasRect.height - s) * 0.5;
+    const x = canvasRect.left - rootRect.left + vx + this.pinnedSample.u * s;
+    const y = canvasRect.top - rootRect.top + vy + (1 - this.pinnedSample.v) * s;
+    this.sampleMarker.style.left = `${x}px`;
+    this.sampleMarker.style.top = `${y}px`;
+    this.sampleMarker.hidden = false;
+  }
 }
 
 function fmt(v: number): string {
   if (!Number.isFinite(v)) return 'nan';
-  if (Math.abs(v) >= 1000 || (Math.abs(v) > 0 && Math.abs(v) < 0.001)) return v.toExponential(2);
-  return v.toFixed(4);
+  const a = Math.abs(v);
+  if (a >= 1000000 || (a > 0 && a < 0.000001)) return v.toExponential(4);
+  if (a >= 10000) return v.toFixed(1);
+  if (a >= 1000) return v.toFixed(2);
+  if (a >= 100) return v.toFixed(3);
+  return v.toFixed(5);
 }
 
 function createSliceTarget(gl: WebGL2RenderingContext, width: number, height: number, useFloat: boolean): SliceTarget {
