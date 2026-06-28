@@ -21,6 +21,8 @@
 
 いずれも「ローカル BRDF 値」のみを返す（光減衰・NoL 乗算・影・area-light LTC・IBL・GBuffer 等は対象外）。
 
+> ⚠️ ただし**両ファイルに共通の実バグ**あり: 異方性（`anisotropy != 0`）かつ低 roughness でハイライトが消えて真っ黒になる。原因は `dGGXAniso` の `max(s, EPS)`（EPS=1e-6）。詳細は下記「★ 共通不具合」節。式自体は正しく、エネルギーも保存している。
+
 ---
 
 ## 1. `unreal_legacy_pbr.brdf` — UE DefaultLit の忠実移植
@@ -132,11 +134,52 @@ MFP/SSS/透過・thin surfaces・粗屈折・glints・specular-profile LUT・She
 
 ---
 
+## ★ 共通不具合: 異方性×低 roughness でハイライトが消える（`dGGXAniso` の EPS クランプ）
+
+`unreal_legacy_pbr.brdf` と `substrate.brdf` の**両方**に存在する実バグ。`anisotropy != 0` かつ低 roughness のとき、スペキュラハイライトが消えて球が真っ黒になる。数値実験で原因を特定済み。
+
+### 原因
+`dGGXAniso` の分母ゼロ除算ガードのしきい値が大きすぎる（`substrate.brdf:89` / `unreal_legacy_pbr.brdf:95`）:
+```glsl
+float s = dot(v, v);
+return (1.0 / PI) * a2 * sqr(a2 / max(s, EPS));   // EPS = 1e-6
+```
+低 roughness では `a2 = ax·ay` が極小（R=0.10 で a2≈1e-4）。ローブのピーク付近で分母 `s` は 1e-8〜1e-6 まで**正当に**小さくなるのに、`max(s, 1e-6)` が 1e-6 で頭打ちにし、**異方性ローブの芯を潰す**（ピーク値が約1万分の1）→ ハイライト消失 → 真っ黒。
+
+### 証拠（数値実験、R=0.10）
+| | ピーク値 (H≈N) | 半球反射率 aniso=0.1 |
+|---|---|---|
+| EPS=1e-6（現状） | **3.1e-3** | **0.0008**（≒黒） |
+| EPS=1e-9 | 32.2 | 0.0400（正しい） |
+| EPS=1e-12 | 32.2 | 0.0400（正しい） |
+
+EPS を小さくすると半球反射率は **aniso=0.1〜0.9 で 0.0400 一定**＝**エネルギーは保存している**。よって**異方性 GGX の式自体は正しく**、犯人は EPS クランプのみ。
+
+### なぜ「異方性かつ低 roughness」限定で、なぜ両ファイルで出るか
+- 等方パス `dGGX` には同種のクランプが無い（分母 `d=1−NoH²(1−a2)` は自然に a2 以上で 0 にならない）→ 異方性のときだけ発症。
+- 高 roughness では出ない: R≥0.3 で a2≥0.0081、ピークの s≈a2²≈6e−5 > 1e−6 でクランプが効かない（実測でも R=0.3 は aniso でほぼ不変）。発症域は roughness≈0.1 以下。
+- 両ファイルとも同一コード（`max(dot(v,v), EPS)`, EPS=1e-6）なので同じ症状。
+- **UE 本家は無クランプ**: [`D_GGXaniso` BRDF.ush:319](C:/work/unreal/Shaders/Private/BRDF.ush:319) は `Square(a2/S)` を `S=dot(V,V)` のまま使う（`a2*NoH` 項で S>0 が担保）。ポート時に追加した `max(s, 1e-6)` が UE に無い過剰ガードで、値が大きすぎた。
+
+> 注: 以前この症状を「energy 保存の差」「ローブが別方向へ動いた」と説明していたが、それらは**誤り**。本 EPS クランプが真因。
+
+### 修正方針（両ファイル）
+- `dGGXAniso` 内の `max(s, EPS)` を専用の極小値へ（例 `max(s, 1e-20)`、実質 UE と同じ。`s` は有効な H では常に >0）。
+- **グローバル `EPS=1e-6` は変えない**（`visSmithJoint*` の `max(visV+visL, EPS)` では 1e-6 が適切）。dGGXAniso 専用に小さい値を使う。
+```glsl
+// dGGXAniso 内のみ
+return (1.0 / PI) * a2 * sqr(a2 / max(s, 1e-20));
+```
+これで低 roughness の異方性ハイライトが復活し、反射率は aniso に対しほぼ一定（エネルギー保存）。高 roughness の挙動は不変。
+
+- 副次（軽微）: `substrate.brdf:177` の `NoH` を 0.9999 にクランプしている点が、等方パスのピークを低 roughness でわずかに下げる（legacy は `saturate` で 0.9999 クランプ無し）。主因ではないので、まずは上記 EPS 修正で十分。
+
 ## 3. 推奨アクション（参考・未適用）
 
-1. ~~**substrate §2.2** — 異方性マッピングを線形式へ~~ → **対応済み**（`ax=max(α·(1+aniso),0.001)` 等。legacy／実 Substrate と一致）。
-2. **legacy §1.4** — `energy_conservation` を**常時 ON 固定**にする（実装予定）。`bool energy_conservation` パラメータを削除し、`if (energy_conservation)` ガードを外して補正3行を常時実行。根拠をコメントに明記。
-3. （任意）substrate §2.3 の fuzz エネルギー保存項（`ComputeEnergyConservation(ClothEnergyTerms)`）を入れるとさらに厳密。影響は小。
+1. **【最優先・両ファイル】★節の不具合** — `dGGXAniso` の `max(s, EPS)` を `max(s, 1e-20)` 等の極小値へ（グローバル `EPS=1e-6` は据え置き）。異方性×低 roughness の暗黒化を解消。
+2. ~~**substrate §2.2** — 異方性マッピングを線形式へ~~ → **対応済み**（`ax=max(α·(1+aniso),0.001)` 等。legacy／実 Substrate と一致）。
+3. **legacy §1.4** — `energy_conservation` を**常時 ON 固定**にする（実装予定）。`bool energy_conservation` パラメータを削除し、`if (energy_conservation)` ガードを外して補正3行を常時実行。根拠をコメントに明記。
+4. （任意）substrate §2.3 の fuzz エネルギー保存項（`ComputeEnergyConservation(ClothEnergyTerms)`）を入れるとさらに厳密。影響は小。
 
 ### 実装ハンドオフ（legacy §1.4 の具体手順）
 `sample/brdf/unreal_legacy_pbr.brdf` を編集:

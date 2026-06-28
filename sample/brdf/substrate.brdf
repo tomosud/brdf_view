@@ -31,6 +31,7 @@ float fuzz_roughness 0.0 1.0 0.7
 
 const float PI = 3.14159265358979323846;
 const float EPS = 0.000001;
+const float ANISO_D_EPS = 1e-20;
 const float MIN_GGX_ROUGHNESS = 0.001;
 const float MIN_FUZZ_ROUGHNESS = 0.05;
 
@@ -86,7 +87,7 @@ float dGGXAniso(float ax, float ay, float NoH, float XoH, float YoH) {
     float a2 = ax * ay;
     vec3 v = vec3(ay * XoH, ax * YoH, a2 * NoH);
     float s = dot(v, v);
-    return (1.0 / PI) * a2 * sqr(a2 / max(s, EPS));
+    return (1.0 / PI) * a2 * sqr(a2 / max(s, ANISO_D_EPS));
 }
 
 float visSmithJoint(float alpha2, float NoV, float NoL) {
