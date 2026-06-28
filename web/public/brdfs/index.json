@@ -39,6 +39,7 @@
   "showVectors.brdf",
   "stretchedphong.brdf",
   "substrate.brdf",
+  "unreal_legacy_pbr.brdf",
   "walter.brdf",
   "ward.brdf"
 ]

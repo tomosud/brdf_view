@@ -6,6 +6,10 @@
 
 更新日: 2026-05-31
 
+現状メモ: 2026-06-28 時点の Web 版では `ALBEDO` view は廃止済み。
+この文書は元 Disney BRDF Explorer の移植調査メモとして残すが、現在の
+Cartesian plot は `Theta V / Theta H / Theta D` のみを実装対象とする。
+
 ## 結論
 
 GitHub Pages でのホストは可能。サーバ側処理は不要で、HTML/CSS/JavaScript/WebAssembly/静的アセットだけで構成できる。
@@ -110,6 +114,7 @@ CMU の `BRDF Toy` や各種 PBR/WebGL demo は見つかるが、Disney BRDF Exp
 - `3D Plot`: `Plot3DWidget`
 - `Polar Plot`: `PlotPolarWidget`
 - `Theta V`, `Theta H`, `Theta D`, `Albedo`: `PlotCartesianWindow` / `PlotCartesianWidget`
+  - 現在の Web 版では `Albedo` は廃止済み。元アプリ側の構造としてのみ記録する。
 - `Lit Sphere`: `LitSphereWindow` / `LitSphereWidget`
 - `Image Slice`: `ImageSliceWindow` / `ImageSliceWidget`
 - `Lit Object`: `IBLWindow` / `IBLWidget`
@@ -210,7 +215,7 @@ Web 版:
 
 - データ線サンプル生成、軸 tick、zoom/pan/scale の計算を元コードから移植する。
 - `Text.geom` は WebGL で使えないため、文字ごとの quad をインスタンス描画する。フォント画像 `verasansmono.png` とセル計算は維持する。
-- Albedo 用 geometry shader は、他の太線と同様に vertex shader/instanced quad 化する。
+- `ALBEDO` は現在廃止済み。Monte Carlo 積分を含む巨大 shader が通常 `.brdf` の初回 compile を重くしていたため、Web 版では `Theta V / Theta H / Theta D` のみを残す。
 
 ### Lit Sphere
 
@@ -305,7 +310,8 @@ Qt dock をそのまま再現する必要はないが、状態と操作は再現
 - log plot checkbox
 - Multiply by `N . L` checkbox
 - incident theta/phi control
-- view tabs/panels: 3D, Polar, Theta V/H/D, Albedo, Lit Sphere, Image Slice, Lit Object
+- view tabs/panels: 3D, Polar, Theta V/H/D, Lit Sphere, Image Slice, Lit Object
+  - `Albedo` は元アプリにはあるが、現在の Web 版では廃止済み。
 - Lit Sphere controls: brightness, gamma, exposure, double theta, use `N.L`
 - Image Slice controls: phiD, brightness, gamma, exposure, thetaH squared, chroma
 - IBL controls: rendering mode, keep sampling, model open, probe open, gamma, exposure
