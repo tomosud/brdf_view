@@ -33,6 +33,7 @@ export function uniformDecls(params: ParamDef[]): string {
  * GLSL ES 3.00 does not. We promote standalone integer literals while leaving:
  *   - array subscripts (`x[0]`, `Cdlin[2]`)  -> not preceded by `[`
  *   - identifiers / existing floats (`vec3`, `2.2`, `.08`, `GTR1`)
+ *   - scientific notation exponents (`1e-20`)
  *
  * Limitation: this is a lexical pass, not a parser. Integer literals that must
  * remain int (e.g. `for (int i = 0; ...)` counters, texelFetch indices) would
@@ -40,7 +41,10 @@ export function uniformDecls(params: ParamDef[]): string {
  * for measured BRDFs.
  */
 export function promoteIntLiterals(src: string): string {
-  return src.replace(/(?<![\w.[])(\d+)(?![\w.])/g, '$1.0');
+  return src.replace(/(?<![\w.[])(\d+)(?![\w.])/g, (match, digits: string, offset: number, full: string) => {
+    if (/[eE][+-]?$/.test(full.slice(Math.max(0, offset - 2), offset))) return match;
+    return `${digits}.0`;
+  });
 }
 
 /**
