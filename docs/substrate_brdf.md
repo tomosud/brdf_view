@@ -1,135 +1,66 @@
 # Unreal Engine 5 Substrate BRDF implementation notes
 
-This note documents the local BRDF approximation implemented in
-`sample/brdf/substrate.brdf`.
+This note documents `sample/brdf/substrate.brdf`.
 
-## References checked
+## Sources checked
 
-- Epic Games documentation: "Overview of Substrate Materials in Unreal Engine"
+- Epic documentation:
   - https://dev.epicgames.com/documentation/en-us/unreal-engine/overview-of-substrate-materials-in-unreal-engine
-- Epic Games documentation: "Substrate Materials in Unreal Engine"
   - https://dev.epicgames.com/documentation/en-us/unreal-engine/substrate-materials-in-unreal-engine
-- Burley, "Physically-Based Shading at Disney", 2012
-  - https://disneyanimation.com/publications/physically-based-shading-at-disney/
-
-Epic's public documentation describes Substrate primarily as a material
-composition framework made from BSDF slabs and operators. It lists and explains
-Slab inputs such as Diffuse Albedo, F0, F90, Roughness, Anisotropy,
-Second Roughness, Second Roughness Weight, Fuzz Amount, Fuzz Color, and
-MFP-related participating-media controls. It does not publish a compact,
-drop-in GLSL function for the full renderer implementation.
+- Local Unreal shader sources:
+  - `C:\work\unreal\Shaders\Private\Substrate\Substrate.ush`
+  - `C:\work\unreal\Shaders\Private\Substrate\SubstrateEvaluation.ush`
+  - `C:\work\unreal\Shaders\Private\BRDF.ush`
+  - `C:\work\unreal\Shaders\Private\ShadingCommon.ush`
+  - `C:\work\unreal\Shaders\Private\ShadingEnergyConservation.ush`
+  - `C:\work\unreal\Shaders\Private\ShadingEnergyConservationTemplate.ush`
 
 ## Scope
 
-The `.brdf` runtime evaluates one pixel-local function:
+The `.brdf` format exposes a local function:
 
 ```glsl
 vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y)
 ```
 
-That makes the following Substrate features reasonable to approximate:
+So this implementation targets a single opaque Substrate Slab direct-lighting
+BRDF. It does not attempt to reproduce engine storage, graph topology, path
+tracing, area-light integration, or LUT-backed renderer features.
 
-| Substrate concept | Implemented as |
+## Implemented mapping
+
+| Substrate / UE concept | Local implementation |
 |---|---|
-| Single Slab BSDF | One opaque direct-reflection BRDF |
-| Diffuse Albedo | Linearized Lambert diffuse |
-| F0 | RGB normal-incidence specular reflectance |
-| F90 | RGB grazing reflectance hue/saturation, normalized to unit brightness |
-| Roughness | Primary anisotropic GGX lobe |
-| Anisotropy | Signed tangent/bitangent GGX aspect ratio |
-| Second Roughness | Secondary GGX lobe roughness |
-| Second Roughness Weight | Mix weight between primary and secondary specular lobes |
-| Fuzz Amount / Fuzz Color / Fuzz Roughness | Charlie sheen lobe with Ashikhmin-style visibility |
+| Diffuse Albedo | sRGB UI color converted to linear, evaluated with UE's EON-style rough diffuse approximation. |
+| F0 | sRGB UI color converted to linear. Default `0.23` becomes roughly linear `0.04`. |
+| F90 | Normalized by max RGB, then multiplied by UE-style F0 micro-occlusion. |
+| Roughness | Primary GGX lobe, clamped to UE-style safe roughness. |
+| Anisotropy | UE/Disney-style anisotropic GGX alpha mapping. |
+| Second Roughness / Weight | UE Haziness approximation: secondary GGX lobe mixed by weight. |
+| `second_roughness_as_clearcoat` | Simplified clearcoat-like Haziness path with top lobe F0=0.04/F90=1. |
+| Fuzz | Deprecated UE fallback approximation: Charlie NDF + Ashikhmin visibility, with lower-lobe attenuation. |
+| Specular energy | UE analytic GGX energy approximation, replacing unavailable LUT lookups. |
 
-The implementation intentionally excludes features that need more than a local
-BRDF evaluation:
+## Important differences from full UE
 
-- Slab graph operators and multi-layer topology
-- MFP / SSS / participating media
-- Transmittance, thin surfaces, rough refraction, and colored shadows
-- Path-traced integration and deferred renderer storage details
-- Specular profile assets and glints
-- Engine-specific lighting, Lumen, Nanite, and material compilation behavior
+- UE's current fuzz path uses Sheen LTC textures. This `.brdf` uses the older
+  Charlie/Ashikhmin fallback because the viewer has no LTC texture.
+- UE's default energy conservation path can use precomputed LUTs. This file uses
+  the analytic approximation present in `ShadingEnergyConservation.ush`.
+- Area-light LTCs, glints, specular-profile LUTs, thin-film F0/F90 baking,
+  SSS/MFP, transmission, rough refraction, and graph layering are not included.
+- Clearcoat-style Haziness is simplified and does not include the full UE
+  bottom-normal or `SimpleClearCoatTransmittance` behavior.
 
-## Parameter mapping
+## Color parameter note
 
-`substrate.brdf` exposes the following controls:
+The app stores `color` parameters as sRGB UI values, then shader code converts
+them with `pow(color, 2.2)`. Therefore:
 
-| Parameter | Meaning |
-|---|---|
-| `diffuse_albedo` | Substrate Diffuse Albedo input. |
-| `f0` | Substrate F0. For common dielectrics use about `0.04 0.04 0.04`. Metals can use colored values. |
-| `f90` | Substrate F90 color. Brightness is normalized so hue/saturation matter most. |
-| `roughness` | Primary perceptual roughness. Internally converted to alpha by squaring. |
-| `anisotropy` | Signed anisotropy. Positive stretches along tangent X, negative along bitangent Y. |
-| `second_roughness` | Secondary perceptual roughness. |
-| `second_roughness_weight` | Blend between primary and secondary specular lobes. |
-| `fuzz_amount` | Strength of fuzz/sheen retroreflection. |
-| `fuzz_color` | Fuzz tint. |
-| `fuzz_roughness` | Fuzz lobe roughness for the Charlie distribution. |
+- `f0 = 0.23 0.23 0.23` evaluates to about linear `0.04`.
+- `diffuse_albedo = 0.46 0.46 0.46` evaluates to about linear `0.18`.
 
-The app's `color` parameters are stored as sRGB UI values, then the shader
-converts them to linear space with `pow(color, 2.2)`. For that reason, the file
-default for `f0` is `0.23 0.23 0.23`, which evaluates to roughly linear `0.04`.
-Likewise, the default `diffuse_albedo` of `0.46 0.46 0.46` evaluates to roughly
-linear `0.18`.
+## Validation status
 
-## BRDF model
-
-The returned BRDF is:
-
-```text
-diffuse + mixed_anisotropic_ggx_specular + fuzz
-```
-
-Specular uses anisotropic GGX with separable Smith visibility:
-
-```text
-specular = F(F0, F90, L.H) * D_GGX_aniso(N.H, H.X, H.Y, ax, ay)
-         * V_Smith_GGX_aniso(L, V, ax, ay)
-```
-
-The second roughness lobe reuses the same Fresnel and anisotropy direction, but
-uses its own roughness:
-
-```text
-mixed_specular = mix(primary_lobe, second_lobe, second_roughness_weight)
-```
-
-Diffuse uses a conservative local energy approximation:
-
-```text
-diffuse = diffuse_albedo / pi * (1 - max(F))
-```
-
-This matches the documented Substrate intent that stronger interface
-reflectance leaves less energy for diffuse scattering, without requiring a full
-engine energy-closure implementation.
-
-F90 handling follows the public documentation behavior in an approximate form:
-
-- Normalize `f90` by its largest RGB component, so its brightness is effectively
-  fixed and the exposed control acts as hue/saturation.
-- Fade grazing color to black when `max(F0) < 0.02`.
-- Interpolate from F0 to the normalized F90 with Schlick's fifth-power term.
-
-Fuzz is modeled with a Charlie distribution and compact visibility term. This is
-the same practical family of lobe used by Disney/OpenPBR-style sheen models and
-is suitable for comparing the angular response in this viewer, but it is not a
-bit-identical copy of Unreal's renderer.
-
-## Known differences from Unreal Engine
-
-This file is a study/visualization BRDF, not a drop-in Unreal shader:
-
-- It uses standard microfacet equations rather than Unreal's private renderer
-  code paths.
-- It does not implement Substrate material graph composition.
-- It has no screen-space, path-traced, ray-traced, virtual-shadow-map, or
-  renderer-storage behavior.
-- It does not model volumetric mean-free-path scattering or rough refraction.
-- It does not use Substrate's optional simplification pipeline for expensive
-  multi-slab materials.
-
-The goal is to expose the parts of Substrate's documented Slab BSDF that can be
-reasonably inspected as a pixel-local BRDF in this repository.
+This is still a validation implementation. It should be compared against Unreal
+with simple Slab materials before treating numeric output as authoritative.

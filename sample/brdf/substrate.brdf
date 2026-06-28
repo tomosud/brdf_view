@@ -1,17 +1,17 @@
 analytic
 
-# Unreal Engine 5 Substrate Slab BSDF - opaque, local BRDF approximation.
+# Unreal Engine 5 Substrate Slab BSDF - opaque direct-lighting approximation.
 #
-# Scope:
-#   - Single Slab BSDF direct-reflection terms that can be evaluated from
-#     L, V, N, tangent X and bitangent Y in this BRDF Explorer runtime.
-#   - DiffuseAlbedo, F0, F90, Roughness, Anisotropy, SecondRoughness,
-#     SecondRoughnessWeight, and Fuzz.
+# This file mirrors the UE Substrate Slab evaluation as far as a single
+# pixel-local BRDF(L,V,N,X,Y) can: GGX + generalized Schlick, UE's joint Smith
+# visibility, analytic GGX energy preservation, Haziness/SecondRoughness, and
+# the deprecated Charlie/Ashikhmin fuzz fallback with UE-style lower-lobe
+# attenuation.
 #
-# Omitted:
-#   - SSS MFP / participating media, transmittance, rough refraction,
-#     layer thickness, operator topology, glints, emission, and path/deferred
-#     engine-specific integrations.
+# Omitted because they require engine data or non-local integration:
+#   MFP/SSS/transmission, thin surfaces, rough refraction, glints,
+#   specular-profile LUTs, Sheen LTC LUTs, area-light LTCs, material graph
+#   topology, simplification, deferred storage, and path tracing.
 
 ::begin parameters
 color diffuse_albedo 0.46 0.46 0.46
@@ -21,6 +21,7 @@ float roughness 0.0 1.0 0.45
 float anisotropy -1.0 1.0 0.0
 float second_roughness 0.0 1.0 0.85
 float second_roughness_weight 0.0 1.0 0.0
+bool second_roughness_as_clearcoat 0
 float fuzz_amount 0.0 1.0 0.0
 color fuzz_color 1.0 1.0 1.0
 float fuzz_roughness 0.0 1.0 0.7
@@ -29,15 +30,20 @@ float fuzz_roughness 0.0 1.0 0.7
 ::begin shader
 
 const float PI = 3.14159265358979323846;
+const float EPS = 0.000001;
+const float MIN_GGX_ROUGHNESS = 0.001;
+const float MIN_FUZZ_ROUGHNESS = 0.05;
 
 float sqr(float x) { return x * x; }
+float pow4(float x) { float x2 = x * x; return x2 * x2; }
 
 float max3(vec3 v) { return max(max(v[0], v[1]), v[2]); }
-
 float luminance(vec3 v) { return dot(v, vec3(0.2126, 0.7152, 0.0722)); }
+float saturate(float x) { return clamp(x, 0.0, 1.0); }
+vec3 saturate(vec3 x) { return clamp(x, vec3(0.0), vec3(1.0)); }
 
 float schlick5(float cosTheta) {
-    float m = clamp(1.0 - cosTheta, 0.0, 1.0);
+    float m = saturate(1.0 - cosTheta);
     float m2 = m * m;
     return m2 * m2 * m;
 }
@@ -46,113 +52,201 @@ vec3 mon2lin(vec3 x) {
     return vec3(pow(x[0], 2.2), pow(x[1], 2.2), pow(x[2], 2.2));
 }
 
-vec3 normalizedEdgeColor(vec3 edgeColor) {
+float makeRoughnessSafe(float r, float minR) {
+    return clamp(r, minR, 1.0);
+}
+
+float f0RGBToMicroOcclusion(vec3 F0) {
+    return saturate(50.0 * max3(F0));
+}
+
+vec3 normalizeF90(vec3 edgeColor) {
     float m = max3(edgeColor);
-    if (m <= 0.0001) return vec3(0.0);
-    return edgeColor / m;
+    return m > 0.0 ? edgeColor / m : vec3(1.0);
 }
 
-// Substrate exposes F90 as the grazing-angle specular color. The documentation
-// describes brightness as fixed at 1 and fading to black for F0 below 0.02.
-vec3 substrateFresnel(float cosTheta, vec3 F0, vec3 F90Color) {
-    vec3 edge = normalizedEdgeColor(F90Color) * smoothstep(0.0, 0.02, max3(F0));
-    return clamp(F0 + (edge - F0) * schlick5(cosTheta), vec3(0.0), vec3(1.0));
+vec3 fresnelSchlick(float VoH, vec3 F0, vec3 F90) {
+    float Fc = schlick5(VoH);
+    return F90 * Fc + (1.0 - Fc) * F0;
 }
 
-void anisotropicAlphas(float perceptualRoughness, float aniso, out float ax, out float ay) {
-    float a = max(sqr(perceptualRoughness), 0.0001);
+// UE BRDF.ush F_Schlick(SpecularColor, VoH) used by the deprecated fuzz path.
+vec3 fresnelSchlickMicroOcclusion(float VoH, vec3 F0) {
+    float Fc = schlick5(VoH);
+    return saturate(50.0 * F0[1]) * Fc + (1.0 - Fc) * F0;
+}
+
+void anisotropicRoughness(float perceptualRoughness, float aniso, out float ax, out float ay) {
+    float alpha = sqr(perceptualRoughness);
     float aspect = sqrt(max(0.1, 1.0 - abs(aniso) * 0.9));
     if (aniso >= 0.0) {
-        ax = a / aspect;
-        ay = a * aspect;
+        ax = alpha / aspect;
+        ay = alpha * aspect;
     } else {
-        ax = a * aspect;
-        ay = a / aspect;
+        ax = alpha * aspect;
+        ay = alpha / aspect;
     }
 }
 
-// Anisotropic GGX NDF (Burley-style form).
-float ggxD(float NdotH, float HdotX, float HdotY, float ax, float ay) {
-    float d = sqr(HdotX / ax) + sqr(HdotY / ay) + sqr(NdotH);
-    return 1.0 / (PI * ax * ay * sqr(d));
+float dGGX(float alpha2, float NoH) {
+    float d = (NoH * alpha2 - NoH) * NoH + 1.0;
+    return alpha2 / (PI * d * d);
 }
 
-// G2 / (4 NdotL NdotV), separable Smith anisotropic GGX.
-float ggxV(float NdotL, float NdotV,
-           float LdotX, float LdotY, float VdotX, float VdotY,
-           float ax, float ay) {
-    float aL = length(vec3(ax * LdotX, ay * LdotY, NdotL));
-    float aV = length(vec3(ax * VdotX, ay * VdotY, NdotV));
-    return 1.0 / ((NdotL + aL) * (NdotV + aV));
+float dGGXAniso(float ax, float ay, float NoH, float XoH, float YoH) {
+    float a2 = ax * ay;
+    vec3 v = vec3(ay * XoH, ax * YoH, a2 * NoH);
+    float s = dot(v, v);
+    return (1.0 / PI) * a2 * sqr(a2 / max(s, EPS));
 }
 
-vec3 ggxSpecular(vec3 F, float NdotH,
-                 float HdotX, float HdotY,
-                 float NdotL, float NdotV,
-                 float LdotX, float LdotY,
-                 float VdotX, float VdotY,
-                 float ax, float ay) {
-    return F * ggxD(NdotH, HdotX, HdotY, ax, ay)
-             * ggxV(NdotL, NdotV, LdotX, LdotY, VdotX, VdotY, ax, ay);
+float visSmithJoint(float alpha2, float NoV, float NoL) {
+    float visV = NoL * sqrt(NoV * (NoV - NoV * alpha2) + alpha2);
+    float visL = NoV * sqrt(NoL * (NoL - NoL * alpha2) + alpha2);
+    return 0.5 / max(visV + visL, EPS);
 }
 
-// Charlie sheen NDF used as a compact local approximation for Substrate Fuzz.
-float charlieD(float NdotH, float rough) {
+float visSmithJointAniso(float ax, float ay, float NoV, float NoL,
+                         float XoV, float XoL, float YoV, float YoL) {
+    float visV = NoL * length(vec3(ax * XoV, ay * YoV, NoV));
+    float visL = NoV * length(vec3(ax * XoL, ay * YoL, NoL));
+    return 0.5 / max(visV + visL, EPS);
+}
+
+vec3 specularGGX(vec3 F0, vec3 F90, float rough,
+                 float NoH, float VoH, float NoV, float NoL,
+                 float XoH, float YoH, float XoV, float XoL, float YoV, float YoL,
+                 float aniso, out vec3 energyPreservation) {
+    float safeR = makeRoughnessSafe(rough, MIN_GGX_ROUGHNESS);
+    float D;
+    float Vis;
+    if (abs(aniso) > 0.0) {
+        float ax, ay;
+        anisotropicRoughness(safeR, aniso, ax, ay);
+        D = dGGXAniso(ax, ay, NoH, XoH, YoH);
+        Vis = visSmithJointAniso(ax, ay, NoV, NoL, XoV, XoL, YoV, YoL);
+    } else {
+        float alpha2 = pow4(safeR);
+        D = dGGX(alpha2, NoH);
+        Vis = visSmithJoint(alpha2, NoV, NoL);
+    }
+
+    // UE analytic approximation path from ShadingEnergyConservation.ush
+    // (equivalent to USE_ENERGY_CONSERVATION == 2, without LUT access).
+    float r = max(safeR, 0.001);
+    float c = saturate(NoV);
+    float e = 1.0 - saturate(pow(r, c / r) * ((r * c + 0.0266916) / (0.466495 + c)));
+    float ef = schlick5(c) * pow(2.36651 * pow(c, 4.7703 * r) + 0.0387332, r);
+    vec3 msScale = 1.0 + F0 * ((1.0 - e) / max(e, EPS));
+    vec3 directionalAlbedo = msScale * (e * F0 + ef * (F90 - F0));
+    energyPreservation = vec3(saturate(1.0 - luminance(directionalAlbedo)));
+
+    return D * Vis * msScale * fresnelSchlick(VoH, F0, F90);
+}
+
+// UE BRDF.ush Diffuse_EON, called by Diffuse_GGX_Rough version 3 with rough*0.4.
+vec3 diffuseEON(vec3 diffuseColor, float rough, float NoV, float NoL, float VoL) {
+    vec3 rho = diffuseColor * (1.0 + (0.189468 - 0.189468 * diffuseColor) * rough);
+    float s = VoL - NoV * NoL;
+    float sOverT = max(s / max(0.000001, max(NoV, NoL)), s);
+    const float constant1FON = 0.5 - 2.0 / (3.0 * PI);
+    float AF = 1.0 - rough * (1.0 - 1.0 / (1.0 + constant1FON));
+    float fSS = AF * (1.0 + rough * sOverT);
+    const float g1 = 0.262048;
+    float gOverPiV = g1 - g1 * NoV;
+    float fMS = 1.0 - AF * (1.0 + rough * gOverPiV);
+    return rho * (fSS + rho * fMS) / PI;
+}
+
+float dCharlie(float rough, float NoH) {
     float r = max(rough, 0.001);
-    float sin2h = max(1.0 - NdotH * NdotH, 0.0078125);
-    return (2.0 + 1.0 / r) * pow(sin2h, 0.5 / r) / (2.0 * PI);
+    float invR = 1.0 / r;
+    float sin2H = max(1.0 - NoH * NoH, 0.0);
+    return (2.0 + invR) * pow(sin2H, invR * 0.5) / (2.0 * PI);
 }
 
-float sheenV(float NdotL, float NdotV) {
-    return 1.0 / (4.0 * (NdotL + NdotV - NdotL * NdotV));
+float visAshikhmin(float NoV, float NoL) {
+    return 1.0 / max(4.0 * (NoL + NoV - NoL * NoV), EPS);
+}
+
+float clothDirectionalAlbedoApprox(float rough, float NoV) {
+    float c = saturate(NoV);
+    float r = saturate(rough);
+    float denom = ((-0.227114 + r) * (-0.968835 + r) * ((5.38869 - 20.2835 * c) * r)
+                - (-1.18761 - ((2.58744 - c) * c)));
+    return saturate((0.526422 / max(denom, 0.001)) + 0.0615456);
 }
 
 vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
-    float NdotL = dot(N, L);
-    float NdotV = dot(N, V);
-    if (NdotL <= 0.0 || NdotV <= 0.0) return vec3(0.0);
-    NdotL = clamp(NdotL, 0.0001, 1.0);
-    NdotV = clamp(NdotV, 0.0001, 1.0);
+    float NoL = dot(N, L);
+    float NoV = dot(N, V);
+    if (NoL <= 0.0 || NoV <= 0.0) return vec3(0.0);
+    NoL = clamp(NoL, 0.0001, 1.0);
+    NoV = clamp(NoV, 0.0001, 1.0);
 
     vec3 H = normalize(L + V);
-    float NdotH = clamp(dot(N, H), 0.0, 1.0);
-    float LdotH = clamp(dot(L, H), 0.0, 1.0);
+    float NoH = clamp(dot(N, H), 0.0, 0.9999);
+    float VoH = clamp(dot(V, H), 0.0, 1.0);
+    float VoL = dot(V, L);
 
-    float HdotX = dot(H, X), HdotY = dot(H, Y);
-    float LdotX = dot(L, X), LdotY = dot(L, Y);
-    float VdotX = dot(V, X), VdotY = dot(V, Y);
+    float XoH = dot(X, H), YoH = dot(Y, H);
+    float XoV = dot(X, V), YoV = dot(Y, V);
+    float XoL = dot(X, L), YoL = dot(Y, L);
 
-    // Color controls in this app are stored as sRGB values; Substrate's
-    // documented reflectance inputs are evaluated here in linear space.
-    vec3 diffuseAlbedo = clamp(mon2lin(diffuse_albedo), vec3(0.0), vec3(1.0));
-    vec3 F0 = clamp(mon2lin(f0), vec3(0.0), vec3(1.0));
-    vec3 F90 = clamp(mon2lin(f90), vec3(0.0), vec3(1.0));
-    vec3 fuzzColor = clamp(mon2lin(fuzz_color), vec3(0.0), vec3(1.0));
+    vec3 diffuseColor = saturate(mon2lin(diffuse_albedo));
+    vec3 F0 = saturate(mon2lin(f0));
+    vec3 F90 = normalizeF90(saturate(mon2lin(f90))) * f0RGBToMicroOcclusion(F0);
+    vec3 fuzzF0 = saturate(mon2lin(fuzz_color));
 
-    vec3 F = substrateFresnel(LdotH, F0, F90);
+    vec3 preserve0;
+    vec3 spec0 = specularGGX(F0, F90, roughness, NoH, VoH, NoV, NoL,
+                             XoH, YoH, XoV, XoL, YoV, YoL, anisotropy, preserve0);
 
-    float ax1, ay1, ax2, ay2;
-    anisotropicAlphas(roughness, anisotropy, ax1, ay1);
-    anisotropicAlphas(second_roughness, anisotropy, ax2, ay2);
+    vec3 specular = spec0;
+    vec3 specularTransmission = preserve0;
 
-    vec3 spec1 = ggxSpecular(F, NdotH, HdotX, HdotY, NdotL, NdotV,
-                             LdotX, LdotY, VdotX, VdotY, ax1, ay1);
-    vec3 spec2 = ggxSpecular(F, NdotH, HdotX, HdotY, NdotL, NdotV,
-                             LdotX, LdotY, VdotX, VdotY, ax2, ay2);
-    vec3 specular = mix(spec1, spec2, second_roughness_weight);
+    if (second_roughness_weight > 0.0) {
+        vec3 hazeF0 = F0;
+        vec3 hazeF90 = F90;
+        if (second_roughness_as_clearcoat) {
+            hazeF0 = vec3(0.04);
+            hazeF90 = vec3(1.0);
+        }
 
-    // A local energy-conservation approximation: increasing F0 reduces the
-    // diffuse medium contribution, matching Substrate's documented behavior.
-    float diffuseWeight = clamp(1.0 - max3(F), 0.0, 1.0);
-    vec3 diffuse = diffuseAlbedo * diffuseWeight / PI;
+        vec3 preserveHaze;
+        vec3 specHaze = specularGGX(hazeF0, hazeF90, second_roughness, NoH, VoH, NoV, NoL,
+                                    XoH, YoH, XoV, XoL, YoV, YoL,
+                                    second_roughness_as_clearcoat ? 0.0 : anisotropy,
+                                    preserveHaze);
 
-    // Fuzz is an interface layer that adds cloth-like retroreflective color.
-    // Keep it attenuated by the remaining non-specular energy budget.
-    vec3 fuzz = fuzz_amount * fuzzColor * diffuseWeight
-              * charlieD(NdotH, fuzz_roughness)
-              * sheenV(NdotL, NdotV);
+        float w = saturate(second_roughness_weight);
+        if (second_roughness_as_clearcoat) {
+            float topF = luminance(fresnelSchlick(VoH, hazeF0, hazeF90));
+            vec3 topThroughput = mix(vec3(1.0), vec3(saturate(1.0 - topF)), w);
+            specular = spec0 * topThroughput + specHaze * w;
+            specularTransmission = preserve0 * topThroughput;
+        } else {
+            specular = mix(spec0, specHaze, w);
+            specularTransmission = mix(preserve0, preserveHaze, w);
+        }
+    }
 
-    return diffuse + specular + fuzz;
+    vec3 diffuse = diffuseEON(diffuseColor, makeRoughnessSafe(roughness, MIN_GGX_ROUGHNESS) * 0.4,
+                              NoV, NoL, VoL) * specularTransmission;
+
+    if (fuzz_amount > 0.0) {
+        float fuzzR = makeRoughnessSafe(fuzz_roughness, MIN_FUZZ_ROUGHNESS);
+        float clothE = clothDirectionalAlbedoApprox(fuzzR, NoV);
+        float lowerTransmission = mix(1.0, saturate(1.0 - clothE), saturate(fuzz_amount));
+        vec3 fuzz = saturate(fuzz_amount) * dCharlie(fuzzR, NoH)
+                  * visAshikhmin(NoV, NoL)
+                  * fresnelSchlickMicroOcclusion(VoH, fuzzF0);
+        diffuse *= lowerTransmission;
+        specular *= lowerTransmission;
+        specular += fuzz;
+    }
+
+    return diffuse + specular;
 }
 
 ::end shader
