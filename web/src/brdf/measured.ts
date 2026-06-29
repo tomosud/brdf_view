@@ -80,7 +80,7 @@ vec3 BRDF( vec3 toLight, vec3 toViewer, vec3 normal, vec3 tangent, vec3 bitangen
 
 let counter = 0;
 
-export function measuredBrdfFromBuffer(name: string, buf: ArrayBuffer): BrdfInstance {
+export function measuredBrdfFromBuffer(name: string, buf: ArrayBuffer, origin?: BrdfDef['origin']): BrdfInstance {
   const measured = parseMerl(buf);
   const def: BrdfDef = {
     name,
@@ -90,5 +90,6 @@ export function measuredBrdfFromBuffer(name: string, buf: ArrayBuffer): BrdfInst
     noPromote: true,
     measured,
   };
+  if (origin) def.origin = origin;
   return { id: `merl-${counter++}`, def, values: new Map(), visible: true };
 }

@@ -1,12 +1,13 @@
-// IndexedDB-backed session persistence. Saves loaded BRDFs (bundled samples
-// and user-uploaded text .brdf files) and restores them on reload.
-// MERL .binary files are skipped (too large to cache).
+// IndexedDB-backed session persistence. Saves loaded BRDFs (bundled samples,
+// user-uploaded text .brdf files, and online MERL URLs) and restores them on
+// reload. MERL .binary payloads are never cached.
 
 import type { Store } from './store.js';
 import { loadBundledBrdf, instanceFromDef } from '../brdf/loader.js';
 import { parseBrdf } from '../brdf/parser.js';
 import type { ParamValue } from '../brdf/types.js';
 import { linearToSrgbRgb } from '../ui/color-space.js';
+import { loadMerlMaterial, type MerlMaterial } from '../io/merl-catalog.js';
 
 const DB_NAME = 'brdf-explorer';
 const DB_VERSION = 1;
@@ -14,10 +15,13 @@ const STORE_NAME = 'session';
 const SESSION_KEY = 'current';
 
 interface SavedBrdf {
-  kind: 'bundled' | 'text';
+  kind: 'bundled' | 'text' | 'merl-online';
   filename: string;
   name: string;
   content?: string;
+  fileName?: string;
+  downloadUrl?: string;
+  size?: number;
   values: Record<string, ParamValue>;
   visible: boolean;
 }
@@ -62,15 +66,26 @@ async function saveSession(store: Store): Promise<void> {
   const brdfs: SavedBrdf[] = [];
   for (const inst of store.state.brdfs) {
     const origin = inst.def.origin;
-    if (!origin) continue; // skip MERL measured BRDFs
+    if (!origin) continue; // skip local MERL measured BRDFs
     const values: Record<string, ParamValue> = {};
     for (const [k, v] of inst.values) {
       values[k] = Array.isArray(v) ? ([...v] as [number, number, number]) : v;
     }
     if (origin.kind === 'bundled') {
       brdfs.push({ kind: 'bundled', filename: origin.filename, name: inst.def.name, values, visible: inst.visible });
-    } else {
+    } else if (origin.kind === 'text') {
       brdfs.push({ kind: 'text', filename: '', name: inst.def.name, content: origin.content, values, visible: inst.visible });
+    } else {
+      brdfs.push({
+        kind: 'merl-online',
+        filename: origin.fileName,
+        name: origin.name,
+        fileName: origin.fileName,
+        downloadUrl: origin.downloadUrl,
+        size: origin.size,
+        values,
+        visible: inst.visible,
+      });
     }
   }
   try {
@@ -110,6 +125,16 @@ export async function restoreSession(store: Store): Promise<boolean> {
 
   let restored = false;
   for (const saved of session.brdfs) {
+    if (saved.kind === 'merl-online') {
+      if (saved.downloadUrl) {
+        setTimeout(() => {
+          void restoreOnlineMerl(store, saved);
+        }, 0);
+        restored = true;
+      }
+      continue;
+    }
+
     try {
       let inst;
       if (saved.kind === 'bundled') {
@@ -139,4 +164,21 @@ export async function restoreSession(store: Store): Promise<boolean> {
     }
   }
   return restored;
+}
+
+async function restoreOnlineMerl(store: Store, saved: SavedBrdf): Promise<void> {
+  if (!saved.downloadUrl) return;
+  try {
+    const material: MerlMaterial = {
+      name: saved.name,
+      fileName: saved.fileName ?? saved.filename,
+      downloadUrl: saved.downloadUrl,
+      size: saved.size ?? 0,
+    };
+    const inst = await loadMerlMaterial(material);
+    inst.visible = saved.visible;
+    store.addBrdf(inst, false); // preserve saved visibility; don't auto-solo
+  } catch (e) {
+    console.warn(`Skipping MERL BRDF "${saved.name}" (could not restore):`, e);
+  }
 }
