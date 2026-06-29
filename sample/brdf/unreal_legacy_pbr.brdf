@@ -2,12 +2,6 @@ analytic
 
 # Unreal Engine legacy Default Lit PBR - local BRDF approximation.
 #
-# Source model:
-#   Shaders/Private/ShadingModels.ush: DefaultLitBxDF / SpecularGGX
-#   Shaders/Private/BRDF.ush: Diffuse_Lambert, D_GGX, D_GGXaniso,
-#       Vis_SmithJointApprox, Vis_SmithJointAniso, F_Schlick
-#   Shaders/Private/ShadingCommon.ush: ComputeF0, ComputeDiffuseAlbedo
-#
 # This .brdf returns the local BRDF value only. It omits Unreal light falloff,
 # NoL multiplication, shadows, rect/area-light LTC, clear coat, SSS, cloth, eye,
 # hair, transmission, IBL preintegration, and renderer-side GBuffer logic.
