@@ -39,7 +39,10 @@ export interface BrdfDef {
   name: string;
   params: ParamDef[];
   /** Tracks where this BRDF came from so IndexedDB can restore it on reload. */
-  origin?: { kind: 'bundled'; filename: string } | { kind: 'text'; name: string; content: string };
+  origin?:
+    | { kind: 'bundled'; filename: string }
+    | { kind: 'text'; name: string; content: string }
+    | { kind: 'merl-online'; name: string; fileName: string; downloadUrl: string; size?: number };
   /** Raw GLSL body that defines `vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y)`. */
   shaderSource: string;
   /** Raw GLSL importance-sampling fragment (IBL); preserved but unused in this milestone. */

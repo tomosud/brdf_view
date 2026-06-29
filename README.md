@@ -12,10 +12,10 @@ BRDF の形状や見た目を確認できます。
 ## できること
 
 - `.brdf` analytic BRDF を読み込んで表示できます。
-- MERL `.binary` measured BRDF を読み込めます。
+- MERL `.binary` measured BRDF をオンライン catalog から選んで読み込めます。
 - 同梱 sample BRDF をアプリ内から選択して読み込めます。
 - BRDF パラメータを調整しながら、複数ビューで比較できます。
-- IndexedDB に前回セッションを保存し、再読み込み時に復元します。
+- IndexedDB に前回セッションを保存し、再読み込み時に MERL は URL から遅延復元します。
 - 元 Disney BRDF Explorer の Windows runtime を比較対象として使えます。
 
 MERL BRDF Database の測定 BRDF は以下から入手できます。
@@ -38,8 +38,8 @@ https://www.merl.com/research/downloads/BRDF
 ## 使い方
 
 1. Web app を開きます。
-2. `Open BRDF...` から `.brdf` または `.binary` ファイルを選びます。
-3. サンプルを試す場合は `Load sample Brdf` を押して一覧から選びます。
+2. `Load MERL` から MERL material を選ぶと、オンラインの `.binary` をダウンロードして読み込みます。
+3. サンプルを試す場合は `Load sample BRDF` を押して一覧から選びます。
 4. 左側のパラメータで表示する BRDF を選び、値を調整します。
 
 ## 検証中の BRDF
