@@ -15,7 +15,6 @@ import { parseHdr } from './io/hdr.js';
 import { PlotPolarView } from './views/plot-polar.js';
 import { PlotCartesianView } from './views/plot-cartesian.js';
 import { scheduleSave, restoreSession } from './state/persist.js';
-import { loadMerlCatalog, loadMerlMaterial, type MerlMaterial } from './io/merl-catalog.js';
 
 function fatal(message: string): void {
   const el = document.getElementById('fatal')!;
@@ -72,7 +71,6 @@ async function main(): Promise<void> {
   new LitSphereView(viewRows.bottom, store);
 
   wireFileLoading(store, views);
-  void wireMerlLoading(store);
   void wireSampleBrdfs(store);
   wireColResizer();
 
@@ -209,58 +207,6 @@ async function wireSampleBrdfs(store: Store): Promise<void> {
     } catch (e) {
       fatal(`Could not load ${select.value}: ${(e as Error).message}`);
       setTimeout(() => document.getElementById('fatal')!.setAttribute('hidden', ''), 4000);
-    }
-  };
-
-  button.addEventListener('click', () => {
-    if (select.hidden) {
-      select.hidden = false;
-      if (!select.value && select.options.length) select.selectedIndex = 0;
-      select.focus();
-      return;
-    }
-    void loadSelected();
-  });
-  select.addEventListener('change', () => void loadSelected());
-}
-
-async function wireMerlLoading(store: Store): Promise<void> {
-  const button = document.getElementById('load-merl') as HTMLButtonElement;
-  const select = document.getElementById('merl-select') as HTMLSelectElement;
-  const byName = new Map<string, MerlMaterial>();
-
-  try {
-    const catalog = await loadMerlCatalog();
-    const materials = [...catalog.materials].sort((a, b) => a.name.localeCompare(b.name));
-    for (const material of materials) byName.set(material.name, material);
-    select.replaceChildren(
-      ...materials.map((material) => {
-        const opt = document.createElement('option');
-        opt.value = material.name;
-        opt.textContent = material.name;
-        return opt;
-      }),
-    );
-  } catch (e) {
-    console.warn('MERL material catalog not available', e);
-    button.disabled = true;
-    button.title = 'MERL catalog not available';
-  }
-
-  const loadSelected = async () => {
-    const material = byName.get(select.value);
-    if (!material) return;
-    const label = button.textContent ?? 'Load MERL';
-    button.disabled = true;
-    button.textContent = 'Loading...';
-    try {
-      store.addBrdf(await loadMerlMaterial(material));
-    } catch (e) {
-      fatal(`Could not load ${material.name}: ${(e as Error).message}`);
-      setTimeout(() => document.getElementById('fatal')!.setAttribute('hidden', ''), 4000);
-    } finally {
-      button.disabled = false;
-      button.textContent = label;
     }
   };
 

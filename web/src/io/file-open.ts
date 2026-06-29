@@ -6,7 +6,7 @@
 import { parseBrdf } from '../brdf/parser.js';
 import { instanceFromDef } from '../brdf/loader.js';
 import { measuredBrdfFromBuffer } from '../brdf/measured.js';
-import type { BrdfDef, BrdfInstance } from '../brdf/types.js';
+import type { BrdfInstance } from '../brdf/types.js';
 
 export async function loadBrdfFile(file: File): Promise<BrdfInstance> {
   const name = file.name.replace(/\.[^.]+$/, '');
@@ -23,9 +23,9 @@ export async function loadBrdfFile(file: File): Promise<BrdfInstance> {
   throw new Error(`unsupported file type: .${ext}`);
 }
 
-/** Fetch a MERL .binary by URL. The binary is not cached in IndexedDB. */
-export async function loadMeasuredFromUrl(url: string, name: string, origin?: BrdfDef['origin']): Promise<BrdfInstance> {
+/** Fetch a bundled MERL .binary by URL (used by the "load sample" affordance). */
+export async function loadMeasuredFromUrl(url: string, name: string): Promise<BrdfInstance> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`failed to fetch ${url}: ${res.status}`);
-  return measuredBrdfFromBuffer(name, await res.arrayBuffer(), origin);
+  return measuredBrdfFromBuffer(name, await res.arrayBuffer());
 }

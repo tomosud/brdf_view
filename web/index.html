@@ -20,9 +20,11 @@
           >
         </h1>
         <div id="toolbar">
-          <button id="load-merl" class="btn" type="button">Load MERL</button>
-          <input id="file-input" type="file" accept=".brdf,.binary" multiple hidden />
-          <button id="load-sample-brdf" class="btn" type="button">Load sample BRDF</button>
+          <label class="btn">
+            Open BRDF…
+            <input id="file-input" type="file" accept=".brdf,.binary" multiple hidden />
+          </label>
+          <button id="load-sample-brdf" class="btn" type="button">Load sample Brdf</button>
           <a
             class="toolbar-link"
             href="https://www.merl.com/research/downloads/BRDF"
@@ -31,7 +33,6 @@
             title="Open the MERL BRDF Database download page for measured .binary BRDF files."
             >MERL BRDF Database download</a
           >
-          <select id="merl-select" class="toolbar-select" hidden></select>
           <select id="sample-brdf-select" class="toolbar-select" hidden></select>
         </div>
         <div id="parameter-panel"></div>
