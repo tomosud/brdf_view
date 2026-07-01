@@ -77,10 +77,10 @@ async function main(): Promise<void> {
   // Restore previous session from IndexedDB; fall back to seeding defaults.
   const restored = await restoreSession(store);
   if (!restored) {
-    for (const file of ['lambert.brdf', 'disney.brdf']) {
+    for (const file of ['lambert.brdf', 'substrate.brdf', 'unreal_legacy_pbr.brdf', 'openpbr.brdf']) {
       try {
         const inst = await loadBundledBrdf(file);
-        if (file !== 'lambert.brdf') inst.visible = false;
+        inst.visible = file === 'substrate.brdf';
         store.addBrdf(inst, inst.visible);
       } catch (e) {
         console.error(e);
