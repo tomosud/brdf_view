@@ -32,8 +32,16 @@ float fuzz_roughness 0.0 1.0 0.7
 const float PI = 3.14159265358979323846;
 const float EPS = 0.000001;
 const float ANISO_D_EPS = 0.00000000000000000001;
-const float MIN_GGX_ROUGHNESS = 0.001;
-const float MIN_FUZZ_ROUGHNESS = 0.05;
+// UE SubstrateDefinitions.h:52-53: SUBSTRATE_MIN_GGX_ROUGHNESS = 0.02 and
+// SUBSTRATE_MIN_FUZZ_ROUGHNESS = 0.02. UE also sanitizes every material with
+// View.MinRoughness (default 0.02) as an obligatory step (Substrate.ush
+// SanitizeRoughness), so GGX is never evaluated below roughness 0.02. This
+// keeps D_GGX finite at NoH == 1 (peak D = 1/(PI*alpha2), alpha2 >= 1.6e-7).
+const float MIN_GGX_ROUGHNESS = 0.02;
+const float MIN_FUZZ_ROUGHNESS = 0.02;
+// UE BRDF.ush GetAnisotropicRoughness clamps the GGX alphas (not roughness)
+// to 0.001; keep that clamp in alpha units, separate from the above.
+const float MIN_ANISO_ALPHA = 0.001;
 
 float sqr(float x) { return x * x; }
 float pow4(float x) { float x2 = x * x; return x2 * x2; }
@@ -74,8 +82,8 @@ vec3 fresnelSchlickMicroOcclusion(float VoH, vec3 F0) {
 
 void anisotropicRoughness(float perceptualRoughness, float aniso, out float ax, out float ay) {
     float alpha = sqr(perceptualRoughness);
-    ax = max(alpha * (1.0 + aniso), MIN_GGX_ROUGHNESS);
-    ay = max(alpha * (1.0 - aniso), MIN_GGX_ROUGHNESS);
+    ax = max(alpha * (1.0 + aniso), MIN_ANISO_ALPHA);
+    ay = max(alpha * (1.0 - aniso), MIN_ANISO_ALPHA);
 }
 
 float dGGX(float alpha2, float NoH) {
@@ -123,7 +131,8 @@ vec3 specularGGX(vec3 F0, vec3 F90, float rough,
 
     // UE analytic approximation path from ShadingEnergyConservation.ush
     // (equivalent to USE_ENERGY_CONSERVATION == 2, without LUT access).
-    float r = max(safeR, 0.001);
+    float r = safeR; // already clamped to MIN_GGX_ROUGHNESS
+
     float c = saturate(NoV);
     float e = 1.0 - saturate(pow(r, c / r) * ((r * c + 0.0266916) / (0.466495 + c)));
     float ef = schlick5(c) * pow(2.36651 * pow(c, 4.7703 * r) + 0.0387332, r);
@@ -175,7 +184,11 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
     NoV = clamp(NoV, 0.0001, 1.0);
 
     vec3 H = normalize(L + V);
-    float NoH = clamp(dot(N, H), 0.0, 0.9999);
+    // UE uses saturate(NoH) with no upper cap below 1.0 (BRDF.ush BxDFContext);
+    // capping NoH at 0.9999 would clip the entire lobe once roughness <~ 0.1
+    // because the lobe half-width alpha = roughness^2 is narrower than the cap.
+    // MIN_GGX_ROUGHNESS keeps D_GGX finite at NoH == 1.
+    float NoH = saturate(dot(N, H));
     float VoH = clamp(dot(V, H), 0.0, 1.0);
     float VoL = dot(V, L);
 

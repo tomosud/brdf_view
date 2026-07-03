@@ -32,8 +32,13 @@ vec3 mon2lin(vec3 x) {
     return vec3(pow(x[0], 2.2), pow(x[1], 2.2), pow(x[2], 2.2));
 }
 
+// UE clamps every material with View.MinRoughness (default 0.02) as an
+// obligatory sanitize step before lighting (Substrate.ush SanitizeRoughness,
+// applied "for forward and deferred"; legacy GBuffer paths do
+// GBuffer.Roughness = max(GBuffer.Roughness, View.MinRoughness)).
+// This also keeps D_GGX finite at NoH == 1 (peak D = 1/(PI*a2)).
 float makeRoughnessSafe(float r) {
-    return clamp(r, 0.001, 1.0);
+    return clamp(r, 0.02, 1.0);
 }
 
 float dielectricSpecularToF0(float s) {

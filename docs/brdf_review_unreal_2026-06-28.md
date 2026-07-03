@@ -21,7 +21,7 @@
 
 いずれも「ローカル BRDF 値」のみを返す（光減衰・NoL 乗算・影・area-light LTC・IBL・GBuffer 等は対象外）。
 
-> ⚠️ ただし**両ファイルに共通の実バグ**あり: 異方性（`anisotropy != 0`）かつ低 roughness でハイライトが消えて真っ黒になる。原因は `dGGXAniso` の `max(s, EPS)`（EPS=1e-6）。詳細は下記「★ 共通不具合」節。式自体は正しく、エネルギーも保存している。
+> ✅ 過去に検出された実バグは**すべて修正済み**（2026-07-04 時点）: ①異方性×低 roughness の暗黒化（`dGGXAniso` EPS → ★節）、②低 roughness スペキュラ消失（NoH 0.9999 キャップ＋min roughness → ★2節）、③legacy の energy conservation 既定 OFF（常時 ON 化 → §1.4）。経緯は各節を参照。
 
 ---
 
@@ -174,12 +174,42 @@ return (1.0 / PI) * a2 * sqr(a2 / max(s, 1e-20));
 
 - 副次（軽微）: `substrate.brdf:177` の `NoH` を 0.9999 にクランプしている点が、等方パスのピークを低 roughness でわずかに下げる（legacy は `saturate` で 0.9999 クランプ無し）。主因ではないので、まずは上記 EPS 修正で十分。
 
+## ★2 追加不具合と修正（2026-07-04）: 低 roughness でスペキュラ消失（substrate）→ 修正済み
+
+### 症状
+`substrate.brdf` で roughness ≈0.1 以下からどんどん暗くなり、0 で真っ黒（異方性ゼロでも発生）。
+
+### 原因（2点、UE と不一致だった）
+1. **`NoH = clamp(dot(N,H), 0.0, 0.9999)` の 0.9999 キャップ** — UE は `saturate`（上限1.0、[`BRDF.ush:30`](C:/work/unreal/Shaders/Private/BRDF.ush:30)、`NoH=1` 直接代入もある）。R≤0.1 の GGX ローブは角度幅 ~α=R²≤0.01 rad で**ローブ全体が NoH>0.9999 内**にあり、キャップがローブの芯を丸ごと裾野の値に潰していた。R=0.05 でピーク D が 5.1e4 → 46.8（約1/1000）。
+2. **最小 roughness 0.001** — UE Substrate は `SUBSTRATE_MIN_GGX_ROUGHNESS = 0.02`（[`SubstrateDefinitions.h:52`](C:/work/unreal/Shaders/Shared/SubstrateDefinitions.h:52)）＋必須サニタイズ `View.MinRoughness`（既定0.02、[`Substrate.ush:3406-3418`](C:/work/unreal/Shaders/Private/Substrate/Substrate.ush:3406) "This step is obligatory"）。legacy 側も `GBuffer.Roughness = max(GBuffer.Roughness, View.MinRoughness)`（MegaLights/Lumen/Capsule 各パス）。fuzz も `SUBSTRATE_MIN_FUZZ_ROUGHNESS = 0.02`（.brdf は 0.05 だった）。
+
+### 数値証拠（半球スペキュラ反射率、F0=0.04、正しくは R によらず ≈0.040）
+| R | 修正前 (cap 0.9999) | 修正後 (cap無し+min 0.02) |
+|---|---|---|
+| 0.30 | 0.0398 | 0.0398 |
+| 0.10 | 0.0218 (−46%) | 0.0401 |
+| 0.05 | 0.0025 (−94%) | 0.0400 |
+| 0.02 | 0.0001 (−99.7%) | 0.0400 |
+| 0.00 | 0.0000（真っ黒） | 0.0400 |
+
+### 適用した修正（両ファイル、2026-07-04）
+- **substrate.brdf**: ① `NoH` を `saturate` に（0.9999 キャップ除去）。② `MIN_GGX_ROUGHNESS` 0.001→**0.02**、`MIN_FUZZ_ROUGHNESS` 0.05→**0.02**。③ 異方性 α クランプは **`MIN_ANISO_ALPHA = 0.001` に分離**（UE `GetAnisotropicRoughness` は α 単位で 0.001。roughness の min と混同すると α=0.02＝roughness≈0.14 相当まで持ち上げてしまうため別定数化）。
+- **unreal_legacy_pbr.brdf**: `makeRoughnessSafe` を 0.001→**0.02** に（`View.MinRoughness` 必須サニタイズ相当）。NoH は元から `saturate` で問題なし。α クランプ 0.001 は据え置き（UE 一致）。
+- min 0.02 により `D_GGX` は NoH=1 でも有限（ピーク D = 1/(π·a2) ≤ 2e6、fp32 安全）。0.9999 キャップの本来の目的（ゼロ除算回避）は min roughness が正しく担う。
+- 検証: 修正後の半球反射率は R=0〜0.5・aniso=0〜0.9 の全域で ≈0.040 フラット（エネルギー保存）。R=0.5 高 aniso のわずかな低下は UE 同様の scalar-roughness MS 補正の残差。
+- `web/public/brdfs/` の両コピーも同期済み。
+
+### 関連: 適用済みのその他修正（ユーザー適用）
+- ★節の `dGGXAniso` EPS バグ → 両ファイルとも `ANISO_D_EPS = 1e-20` で**修正済み**。
+- legacy の energy conservation → トグル削除で**常時 ON 化済み**（§1.4 の決定どおり）。あわせて `rough_diffuse`（EON 拡散）オプションは削除され Lambert 固定に簡素化。
+
 ## 3. 推奨アクション（参考・未適用）
 
-1. **【最優先・両ファイル】★節の不具合** — `dGGXAniso` の `max(s, EPS)` を `max(s, 1e-20)` 等の極小値へ（グローバル `EPS=1e-6` は据え置き）。異方性×低 roughness の暗黒化を解消。
+1. ~~**【最優先・両ファイル】★節の不具合** — `dGGXAniso` の EPS~~ → **対応済み**（`ANISO_D_EPS = 1e-20`）。
 2. ~~**substrate §2.2** — 異方性マッピングを線形式へ~~ → **対応済み**（`ax=max(α·(1+aniso),0.001)` 等。legacy／実 Substrate と一致）。
-3. **legacy §1.4** — `energy_conservation` を**常時 ON 固定**にする（実装予定）。`bool energy_conservation` パラメータを削除し、`if (energy_conservation)` ガードを外して補正3行を常時実行。根拠をコメントに明記。
-4. （任意）substrate §2.3 の fuzz エネルギー保存項（`ComputeEnergyConservation(ClothEnergyTerms)`）を入れるとさらに厳密。影響は小。
+3. ~~**legacy §1.4** — `energy_conservation` を常時 ON 固定~~ → **対応済み**（トグル削除、補正常時実行）。
+4. ~~**★2節** — 低 roughness スペキュラ消失（NoH キャップ＋min roughness）~~ → **対応済み**（NoH `saturate` 化、min 0.02、fuzz min 0.02、`MIN_ANISO_ALPHA` 分離）。
+5. （任意・残）substrate §2.3 の fuzz エネルギー保存項（`ComputeEnergyConservation(ClothEnergyTerms)`）を入れるとさらに厳密。影響は小。
 
 ### 実装ハンドオフ（legacy §1.4 の具体手順）
 `sample/brdf/unreal_legacy_pbr.brdf` を編集:
