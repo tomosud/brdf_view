@@ -13,6 +13,7 @@ BRDF の形状や見た目を確認できます。
 
 - `.brdf` analytic BRDF を読み込んで表示できます。
 - MERL `.binary` measured BRDF を読み込めます。
+- RGL-EPFL `.bsdf` measured BRDF（RGB 版）を読み込めます。異方性データにも対応しています。
 - 同梱 sample BRDF をアプリ内から選択して読み込めます。
 - BRDF パラメータを調整しながら、複数ビューで比較できます。
 - IndexedDB に前回セッションを保存し、再読み込み時に復元します。
@@ -21,6 +22,11 @@ BRDF の形状や見た目を確認できます。
 MERL BRDF Database の測定 BRDF は以下から入手できます。
 
 https://www.merl.com/research/downloads/BRDF
+
+RGL-EPFL Material Database の測定 BRDF（`.bsdf`）は以下から入手できます。
+ファイル名末尾が `_rgb.bsdf` の RGB 版を使用してください（spectral 版は未対応）。
+
+https://rgl.epfl.ch/materials
 
 ## ビュー
 
@@ -38,7 +44,7 @@ https://www.merl.com/research/downloads/BRDF
 ## 使い方
 
 1. Web app を開きます。
-2. `Open BRDF...` から `.brdf` または `.binary` ファイルを選びます。
+2. `Open BRDF...` から `.brdf` / `.binary` / `.bsdf` ファイルを選びます。
 3. サンプルを試す場合は `Load sample Brdf` を押して一覧から選びます。
 4. 左側のパラメータで表示する BRDF を選び、値を調整します。
 
@@ -57,6 +63,20 @@ https://www.merl.com/research/downloads/BRDF
 
 各項目が「そのまま実装」「代替」「省略」のどれかは
 [PBR BRDF validation status](docs/pbr_brdf_validation_status.md) にまとめています。
+
+## RGL-EPFL `.bsdf` の実装について
+
+[rgl-epfl/brdf-loader](https://github.com/rgl-epfl/brdf-loader) の参照実装
+（`powitacq_rgb`）の `eval()` を GLSL に移植したものです。
+
+- `.bsdf`（tensor file 形式）をブラウザ内でパースし、ndf / sigma / vndf / rgb
+  の各テーブルを単一の R32F テクスチャにパックして shader から参照します。
+- vndf の逆写像（`Marginal2D::invert`）に必要な CDF テーブルは読み込み時に
+  CPU 側で構築します。
+- 参照実装の `eval()` は f_r に出射方向の cosine を掛けた値を返す規約のため、
+  本ビューアの規約（素の f_r）に合わせて cosine で除算しています。
+- 等方性・異方性データの両方に対応しています。spectral 版 `.bsdf` は未対応
+  です（RGB 版 `_rgb.bsdf` を使用してください）。
 
 ## 開発
 
