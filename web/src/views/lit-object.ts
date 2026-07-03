@@ -87,7 +87,16 @@ export class LitObjectView extends BaseView {
 
     this.buildControls();
     this.setupInteraction();
-    this.resetUnsub = store.subscribe(() => this.resetAccumulation());
+    // Restart accumulation only when a store change actually affects this
+    // view's image. In IBL mode the incident-light direction (and N·L toggle)
+    // is unused by the shader, so light drags neither reset the converged
+    // result nor trigger a re-render of the Monte-Carlo scene pass.
+    this.resetUnsub = store.subscribe(() => {
+      const sig = this.storeSignature();
+      if (sig === this.lastStoreSig) return;
+      this.lastStoreSig = sig;
+      this.resetAccumulation();
+    });
 
     this.cache = new BrdfProgramCache(gl, 'iblObject.vert', 'iblObject.frag', 'IBL');
     const bgReady = Promise.all([loadTemplate('iblBackground.vert'), loadTemplate('iblBackground.frag')])
@@ -144,6 +153,14 @@ export class LitObjectView extends BaseView {
       this.drawScene(cam, this.sceneTarget.framebuffer, w, h);
       this.drawTextureToScreen(this.sceneTarget.texture, w, h);
       this.updateAccumStatus(0);
+      return;
+    }
+
+    // Converged: re-present the accumulated image (applies current
+    // gamma/exposure) without paying for another Monte-Carlo scene pass.
+    if (this.accumFrame >= MAX_ACCUM_FRAMES) {
+      this.drawTextureToScreen(this.accumTargets[this.accumRead].texture, w, h);
+      this.updateAccumStatus(this.accumFrame);
       return;
     }
 
@@ -275,6 +292,18 @@ export class LitObjectView extends BaseView {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
     gl.depthMask(true);
+  }
+
+  private lastStoreSig: string | null = null;
+
+  /** Serialize the store-derived inputs this view's image depends on. */
+  private storeSignature(): string {
+    const pkg = this.store.topmostEnabled();
+    const s = this.store.state;
+    return JSON.stringify([
+      pkg ? [pkg.instance.id, [...pkg.instance.values]] : null,
+      this.renderWithIBL ? null : [s.incidentTheta, s.incidentPhi, s.useNDotL],
+    ]);
   }
 
   private resetAccumulation(): void {

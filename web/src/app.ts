@@ -77,15 +77,20 @@ async function main(): Promise<void> {
   // Restore previous session from IndexedDB; fall back to seeding defaults.
   const restored = await restoreSession(store);
   if (!restored) {
-    for (const file of ['lambert.brdf', 'substrate.brdf', 'unreal_legacy_pbr.brdf', 'openpbr.brdf']) {
+    for (const file of ['lambert.brdf', 'unreal_legacy_pbr.brdf', 'openpbr.brdf', 'substrate.brdf']) {
       try {
-        const inst = await loadBundledBrdf(file);
-        inst.visible = file === 'substrate.brdf';
-        store.addBrdf(inst, inst.visible);
+        store.addBrdf(await loadBundledBrdf(file), false);
       } catch (e) {
         console.error(e);
       }
     }
+  }
+
+  // Whether seeded or restored, make sure something renders: if no BRDF is
+  // visible, enable the bottom-most entry in the list.
+  const brdfs = store.state.brdfs;
+  if (brdfs.length && !brdfs.some((b) => b.visible)) {
+    store.setVisible(brdfs[brdfs.length - 1].id, true);
   }
 
   // Begin persisting after initial load to avoid saving during restore.
