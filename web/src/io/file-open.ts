@@ -1,11 +1,13 @@
 // Runtime file loading, dispatched by extension (matching createBRDFFromFile):
 //   .brdf   -> analytic BRDF
 //   .binary -> MERL measured BRDF
+//   .bsdf   -> RGL EPFL measured BRDF (tensor file, RGB variant)
 // (.dat anisotropic measured and .bparam are future work.)
 
 import { parseBrdf } from '../brdf/parser.js';
 import { instanceFromDef } from '../brdf/loader.js';
 import { measuredBrdfFromBuffer } from '../brdf/measured.js';
+import { bsdfBrdfFromBuffer } from '../brdf/measured-bsdf.js';
 import type { BrdfInstance } from '../brdf/types.js';
 
 export async function loadBrdfFile(file: File): Promise<BrdfInstance> {
@@ -19,6 +21,9 @@ export async function loadBrdfFile(file: File): Promise<BrdfInstance> {
   }
   if (ext === 'binary') {
     return measuredBrdfFromBuffer(name, await file.arrayBuffer());
+  }
+  if (ext === 'bsdf') {
+    return bsdfBrdfFromBuffer(name, await file.arrayBuffer());
   }
   throw new Error(`unsupported file type: .${ext}`);
 }
