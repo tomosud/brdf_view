@@ -15,7 +15,6 @@ analytic
 
 ::begin parameters
 color diffuse_albedo 0.45882353 0.45882353 0.45882353
-bool rough_diffuse 0
 color f0 0.23 0.23 0.23
 color f90 1.0 1.0 1.0
 float roughness 0.0 1.0 0.3
@@ -43,6 +42,8 @@ const float MIN_FUZZ_ROUGHNESS = 0.02;
 // UE BRDF.ush GetAnisotropicRoughness clamps the GGX alphas (not roughness)
 // to 0.001; keep that clamp in alpha units, separate from the above.
 const float MIN_ANISO_ALPHA = 0.001;
+// UE forces rough diffuse on when Substrate is enabled, so keep it fixed here.
+const bool rough_diffuse = true;
 
 float sqr(float x) { return x * x; }
 float pow4(float x) { float x2 = x * x; return x2 * x2; }
@@ -235,10 +236,9 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
         }
     }
 
-    // UE gates the rough diffuse model behind the "Enable Rough Diffuse Material"
-    // project setting (r.Material.RoughDiffuse, default OFF) plus r.Substrate.RoughDiffuse.
-    // Default OFF => Diffuse_Lambert. rough_diffuse=1 reproduces the project setting
-    // enabled: Diffuse_GGX_Rough v3 == Diffuse_EON with roughness*0.4.
+    // UE gates the rough diffuse model behind rough diffuse settings, but
+    // Substrate-enabled rendering forces it on. rough_diffuse is fixed to 1:
+    // Diffuse_GGX_Rough v3 == Diffuse_EON with roughness*0.4.
     vec3 diffuseBase = rough_diffuse
         ? diffuseEON(diffuseColor, makeRoughnessSafe(roughness, MIN_GGX_ROUGHNESS) * 0.4, NoV, NoL, VoL)
         : diffuseColor * (1.0 / PI);

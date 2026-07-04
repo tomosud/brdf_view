@@ -12,7 +12,6 @@ float metallic 0.0 1.0 0.0
 float specular 0.0 1.0 0.5
 float roughness 0.0 1.0 0.3
 float anisotropy -0.99 0.99 0.0
-bool rough_diffuse 0
 ::end parameters
 
 ::begin shader
@@ -20,6 +19,7 @@ bool rough_diffuse 0
 const float PI = 3.14159265358979323846;
 const float EPS = 0.000001;
 const float ANISO_D_EPS = 0.00000000000000000001;
+const bool rough_diffuse = false;
 
 float sqr(float x) { return x * x; }
 float pow4(float x) { float x2 = x * x; return x2 * x2; }
@@ -156,9 +156,8 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
     vec3 diffuseColor = computeDiffuseAlbedo(baseColor, m);
     vec3 specularColor = computeF0(s, baseColor, m);
 
-    // UE default diffuse is Lambert; the rough (EON/Chan) model is gated behind the
-    // "Enable Rough Diffuse Material" project setting (r.Material.RoughDiffuse), OFF by
-    // default. rough_diffuse=1 reproduces that setting enabled.
+    // UE legacy Default Lit uses Lambert by default. The rough diffuse path is
+    // behind r.Material.RoughDiffuse, so rough_diffuse is fixed to 0 here.
     vec3 diffuse = rough_diffuse
         ? diffuseGGXRough(diffuseColor, r, NoV, NoL, VoH)
         : diffuseLambert(diffuseColor);

@@ -8,6 +8,8 @@
 - `sample/brdf/substrate.brdf`
 
 この文書は各 `.brdf` が何を実装し、何を代替し、何を省略したかをまとめる。
+Unreal系BRDFの詳細なソース照合状況は
+[`unreal_brdf_reproduction_status.md`](unreal_brdf_reproduction_status.md) にまとめる。
 
 このツールで実行する入口は次の1関数だけ。
 
@@ -78,10 +80,8 @@ GBuffer、マテリアルグラフ、パストレーシング、非ローカル�
 | `base_color` | color / `.82 .67 .16` | ベース色。拡散色と金属F0に使う。 |
 | `metallic` | `0..1` / `0` | 拡散色を減らし、F0をbase色へ寄せる。 |
 | `specular` | `0..1` / `.5` | 誘電体F0。`0.08 * specular` として使う。 |
-| `roughness` | `0..1` / `.5` | GGX粗さ。最小値 `0.001` に丸める。 |
+| `roughness` | `0..1` / `.3` | GGX粗さ。最小値 `0.02` に丸める。 |
 | `anisotropy` | `-0.99..0.99` / `0` | 異方性GGXに切り替える。 |
-| `rough_diffuse` | bool / `0` | Lambertとrough diffuseを切り替える。 |
-| `energy_conservation` | bool / `0` | 解析近似のGGXエネルギー補正を使う。 |
 
 ### 実装対応
 
@@ -89,12 +89,12 @@ GBuffer、マテリアルグラフ、パストレーシング、非ローカル�
 |---|---|---:|---|---|
 | F0 | `Specular`、`BaseColor`、`Metallic` から計算する。 | 高 | `mix(vec3(0.08 * specular), base_color, metallic)`。 | そのまま |
 | diffuse albedo | 金属度で拡散色を減らす。 | 高 | `base_color * (1 - metallic)`。 | そのまま |
-| default diffuse | legacy Default Litの通常経路はLambert。 | 高 | `rough_diffuse = 0` でLambert。 | そのまま |
-| rough diffuse | rough diffuse経路がある。 | 中 | `rough_diffuse = 1` でEON系近似を使う。 | 代替 |
+| default diffuse | legacy Default Litの通常経路はLambert。rough diffuseは別permutation。 | 高 | `rough_diffuse` は固定 `false`。Lambertのみ。 | そのまま |
+| rough diffuse | `MATERIAL_ROUGHDIFFUSE` 有効時は `Diffuse_GGX_Rough` 経路がある。 | 高 | 通常legacy比較用として無効固定。 | 省略 |
 | isotropic specular | GGX NDF、joint Smith visibility、Schlick Fresnel。 | 高 | `D_GGX * Vis_SmithJointApprox * F_Schlick`。 | そのまま |
 | anisotropic specular | 異方性GGX経路。 | 高 | `anisotropy != 0` で `D_GGXaniso * Vis_SmithJointAniso`。 | そのまま |
 | Fresnel micro-occlusion | F0が低い場合、grazing項が常に白にならない。 | 高 | `F0RGBToMicroOcclusion` 相当を使う。 | そのまま |
-| energy conservation | project/platformで変わる補正経路。 | 中 | UI boolで有効化する解析近似。既定はoff。 | 代替 |
+| energy conservation | project/platformで変わる補正経路。モダンUE/Substrate有効時はON寄り。 | 中 | 解析近似を常時ON。 | 代替 |
 | clear coat / cloth / hair / eye / SSS / transmission | Default Litとは別のモデル。 | 高 | 実装なし。 | 省略 |
 | light shape / area light / IBL / shadow / GBuffer | レンダラ側の処理。 | 高 | 実装なし。 | 省略 |
 
@@ -154,15 +154,15 @@ GBuffer、マテリアルグラフ、パストレーシング、非ローカル�
 |---|---:|---|
 | `diffuse_albedo` | color / `.46 .46 .46` | 拡散色。 |
 | `f0` | color / `.23 .23 .23` | 主スペキュラF0。既定値はリニアで約0.04。 |
-| `f90` | color / `1 1 1` | grazing色。正規化してmicro-occlusionを掛ける。 |
-| `roughness` | `0..1` / `.45` | 主GGX粗さ。最小値 `0.001` に丸める。 |
+| `f90` | color / `1 1 1` | generalized Schlickのgrazing色。micro-occlusionを掛ける。 |
+| `roughness` | `0..1` / `.3` | 主GGX粗さ。最小値 `0.02` に丸める。 |
 | `anisotropy` | `-1..1` / `0` | 主GGXの異方性。 |
 | `second_roughness` | `0..1` / `.85` | 2つ目のスペキュラlobeの粗さ。 |
 | `second_roughness_weight` | `0..1` / `0` | 主lobeと2つ目のlobeの混合量。 |
 | `second_roughness_as_clearcoat` | bool / `0` | 2つ目のlobeを簡易clearcoatとして扱う。 |
 | `fuzz_amount` | `0..1` / `0` | fuzz lobeの重み。下層も減衰する。 |
 | `fuzz_color` | color / `1 1 1` | fuzz FresnelのF0。 |
-| `fuzz_roughness` | `0..1` / `.7` | fuzz粗さ。最小値 `0.05` に丸める。 |
+| `fuzz_roughness` | `0..1` / `.7` | fuzz粗さ。最小値 `0.02` に丸める。 |
 
 ### 実装対応
 
@@ -171,9 +171,9 @@ GBuffer、マテリアルグラフ、パストレーシング、非ローカル�
 | Slab specular | GGXまたは異方性GGX。 | 高 | GGX / anisotropic GGX。 | そのまま |
 | visibility | joint Smith visibility。 | 高 | `Vis_SmithJoint` / `Vis_SmithJointAniso` 相当。 | そのまま |
 | Fresnel | F0/F90のgeneralized Schlick。 | 高 | `fresnelSchlick(VoH, F0, F90)`。 | そのまま |
-| F90 | 最大RGBで正規化し、F0由来のmicro-occlusionを掛ける。 | 高 | `normalizeF90(f90) * F0RGBToMicroOcclusion(F0)`。 | そのまま |
+| F90 | generalized Schlickのgrazing色にF0由来のmicro-occlusionを掛ける。 | 高 | `f90 * F0RGBToMicroOcclusion(F0)`。 | そのまま |
 | energy preservation | LUTまたは解析近似の経路がある。 | 中 | 解析近似のみ。LUTは使わない。 | 代替 |
-| diffuse | rough diffuse。 | 中 | EON系rough diffuseを `roughness * 0.4` で使う。 | 代替 |
+| diffuse | Substrateの通常direct lightingではrough diffuse有効。手元UE sourceは `Diffuse_GGX_Rough` v3、つまりEON。 | 高 | `rough_diffuse` は固定 `true`。EONを `roughness * 0.4` で使う。 | そのまま |
 | second roughness | Haziness / second roughness系の追加lobe。 | 中 | 2つ目のGGX lobeとして混合。 | 代替 |
 | clearcoat-like second lobe | clearcoat的な上層扱いがある。 | 低 | F0=0.04、F90=1.0の簡易上層として合成。 | 代替 |
 | fuzz | fuzz/sheen系処理。 | 低 | Charlie NDF + Ashikhmin visibility、下層を簡易減衰。 | 代替 |
