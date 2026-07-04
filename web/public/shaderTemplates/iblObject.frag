@@ -2,21 +2,24 @@
 // Lit Object (IBL) shading. Two render modes:
 //   renderWithIBL == 0  -> single directional light from incidentVector (No IBL)
 //   renderWithIBL == 1  -> mixed Monte-Carlo over the equirect env. The sampler
-//                          combines cosine hemisphere samples with two glossy
-//                          lobes around the mirror direction, and evaluates with
-//                          the mixture pdf: BRDF * env * cos / pdf.
-// The injected analytic/measured BRDF is evaluated per sample. Importance
-// sampling via env CDF textures is future work.
+//                          combines cosine hemisphere samples, two glossy lobes
+//                          around the mirror direction, and environment-map
+//                          luminance sampling. It evaluates with the mixture pdf:
+//                          BRDF * env * cos / pdf.
+// The injected analytic/measured BRDF is evaluated per sample.
 precision highp float;
 precision highp int;
 
 uniform sampler2D envMap;
+uniform sampler2D envConditionalCdf;
+uniform sampler2D envMarginalCdf;
 uniform vec3 cameraPos;
 uniform vec3 incidentVector;
 uniform float useNDotL;
 uniform float renderWithIBL;
 uniform float envIntensity;
 uniform float grayscaleIBL;
+uniform float envTotalWeight;
 uniform int numSamples;
 uniform int frameIndex;
 
@@ -38,6 +41,14 @@ vec2 dirToUV(vec3 d)
     return vec2(u, v);
 }
 
+vec3 uvToDir(vec2 uv)
+{
+    float phi = (uv.x - 0.5) * (2.0 * kPI);
+    float y = sin((0.5 - uv.y) * kPI);
+    float r = sqrt(max(0.0, 1.0 - y * y));
+    return vec3(cos(phi) * r, y, sin(phi) * r);
+}
+
 vec3 sampleEnv(vec3 d)
 {
     vec3 c = texture(envMap, dirToUV(d)).rgb;
@@ -45,6 +56,55 @@ vec3 sampleEnv(vec3 d)
         c = vec3(dot(c, vec3(0.2126, 0.7152, 0.0722)));
     }
     return c * envIntensity;
+}
+
+int lowerBound1D(sampler2D cdfTex, int x, int n, float u)
+{
+    int lo = 0;
+    int hi = n - 1;
+    for (int i = 0; i < 20; i++) {
+        if (lo >= hi) break;
+        int mid = (lo + hi) / 2;
+        float cdf = texelFetch(cdfTex, ivec2(x, mid), 0).r;
+        if (cdf < u) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
+int lowerBoundRow(sampler2D cdfTex, int y, int n, float u)
+{
+    int lo = 0;
+    int hi = n - 1;
+    for (int i = 0; i < 20; i++) {
+        if (lo >= hi) break;
+        int mid = (lo + hi) / 2;
+        float cdf = texelFetch(cdfTex, ivec2(mid, y), 0).r;
+        if (cdf < u) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
+vec3 envImportanceSample(float u1, float u2)
+{
+    ivec2 sz = textureSize(envConditionalCdf, 0);
+    int y = lowerBound1D(envMarginalCdf, 0, sz.y, u1);
+    int x = lowerBoundRow(envConditionalCdf, y, sz.x, u2);
+    vec2 uv = (vec2(float(x), float(y)) + vec2(0.5)) / vec2(sz);
+    return uvToDir(uv);
+}
+
+float envImportancePdf(vec3 d)
+{
+    if (envTotalWeight <= 0.0) return 0.0;
+    ivec2 sz = textureSize(envMap, 0);
+    vec2 uv = dirToUV(d);
+    int x = clamp(int(floor(fract(uv.x) * float(sz.x))), 0, sz.x - 1);
+    int y = clamp(int(floor(clamp(uv.y, 0.0, 0.999999) * float(sz.y))), 0, sz.y - 1);
+    vec3 c = texelFetch(envMap, ivec2(x, y), 0).rgb;
+    float luminance = max(dot(max(c, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722)), 0.0);
+    return luminance * float(sz.x * sz.y) / (envTotalWeight * 2.0 * kPI * kPI);
 }
 
 // van der Corput radical inverse (base 2)
@@ -115,8 +175,8 @@ void main(void)
         const float sharpGlossExponent = 2048.0;
         for (int i = 0; i < numSamples; i++) {
             int sampleIndex = sampleOffset + i;
-            int component = sampleIndex - (sampleIndex / 3) * 3;
-            int componentIndex = sampleIndex / 3;
+            int component = sampleIndex - (sampleIndex / 4) * 4;
+            int componentIndex = sampleIndex / 4;
             float u1 = fract(float(componentIndex) * 0.6180339887498949 + jitter.x);
             float u2 = fract(radicalInverse(uint(componentIndex)) + jitter.y);
 
@@ -125,15 +185,18 @@ void main(void)
                 L = cosineSample(N, u1, u2);
             } else if (component == 1) {
                 L = powerCosineSample(R, mediumGlossExponent, u1, u2);
-            } else {
+            } else if (component == 2) {
                 L = powerCosineSample(R, sharpGlossExponent, u1, u2);
+            } else {
+                L = envImportanceSample(u1, u2);
             }
 
             float nDotL = max(dot(N, L), 0.0);
             float cosinePdf = nDotL / kPI;
             float mediumPdf = powerCosinePdf(dot(R, L), mediumGlossExponent);
             float sharpPdf = powerCosinePdf(dot(R, L), sharpGlossExponent);
-            float pdf = (cosinePdf + mediumPdf + sharpPdf) / 3.0;
+            float envPdf = envImportancePdf(L);
+            float pdf = (cosinePdf + mediumPdf + sharpPdf + envPdf) / 4.0;
             if (nDotL <= 0.0 || pdf <= 0.0) continue;
 
             vec3 env = sampleEnv(L);

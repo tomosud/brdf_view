@@ -261,6 +261,13 @@ export class LitObjectView extends BaseView {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.env.texture);
     prog.u.i('envMap', 1);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.env.conditionalCdf);
+    prog.u.i('envConditionalCdf', 2);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.env.marginalCdf);
+    prog.u.i('envMarginalCdf', 3);
+    prog.u.f('envTotalWeight', this.env.totalWeight);
     this.cache.applyParams(prog.u, pkg.instance);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posVBO);
