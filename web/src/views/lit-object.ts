@@ -55,6 +55,21 @@ export class LitObjectView extends BaseView {
   private meshName = 'sphere';
   private hideBackground = false;
   private grayscaleIBL = false;
+  private envName = '';
+  private envSelectButton: HTMLButtonElement | null = null;
+  private envSelectText: HTMLElement | null = null;
+  private envSelectPopover: HTMLElement | null = null;
+  private envSelectPreviewImg: HTMLImageElement | null = null;
+  private envSelectPreviewName: HTMLElement | null = null;
+
+  private readonly closeEnvironmentMenuOnWindowChange = () => this.closeEnvironmentMenu();
+  private readonly closeEnvironmentMenuOnOutsidePointer = (e: PointerEvent) => {
+    if (!this.envSelectPopover || this.envSelectPopover.hidden) return;
+    if (e.target instanceof Node && (this.envSelectPopover.contains(e.target) || this.envSelectButton?.contains(e.target))) {
+      return;
+    }
+    this.closeEnvironmentMenu();
+  };
 
   constructor(
     container: HTMLElement,
@@ -62,9 +77,11 @@ export class LitObjectView extends BaseView {
     envImg: HdrImage,
     private envNames: string[] = [],
     private objNames: string[] = [],
+    private envThumbs: Record<string, string> = {},
   ) {
     super(container, store, 'Lit Object');
     const gl = this.gl;
+    this.envName = envNames[0] ?? '';
 
     this.floatRenderTargets = !!gl.getExtension('EXT_color_buffer_float');
     this.env = uploadEnv(gl, envImg);
@@ -326,6 +343,7 @@ export class LitObjectView extends BaseView {
 
   override dispose(): void {
     super.dispose();
+    this.closeEnvironmentMenu();
     this.resetUnsub?.();
   }
 
@@ -346,6 +364,8 @@ export class LitObjectView extends BaseView {
       const res = await fetch(`${import.meta.env.BASE_URL}environments/${name}`);
       if (!res.ok) throw new Error(`${res.status}`);
       this.env = uploadEnv(this.gl, parseHdr(await res.arrayBuffer()));
+      this.envName = name;
+      this.updateEnvironmentSelectButton();
       this.resetAccumulation();
     } catch (e) {
       console.error(`Failed to load environment ${name}`, e);
@@ -385,12 +405,7 @@ export class LitObjectView extends BaseView {
     );
 
     this.footer.append(
-      selectControl(
-        'Env',
-        this.envNames.map((name) => ({ value: name, text: name.replace(/\.(hdr|exr)$/i, '') })),
-        this.envNames[0] ?? '',
-        (v) => void this.loadEnvironment(v),
-      ),
+      this.buildEnvironmentSelect(),
       selectControl(
         'Object',
         [
@@ -410,6 +425,185 @@ export class LitObjectView extends BaseView {
         this.requestRender();
       }),
     );
+  }
+
+  private buildEnvironmentSelect(): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'ctl-row env-select-row';
+    const label = document.createElement('span');
+    label.className = 'ctl-label';
+    label.textContent = 'Env';
+    label.title = 'Env';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'env-select';
+    this.envSelectButton = document.createElement('button');
+    this.envSelectButton.type = 'button';
+    this.envSelectButton.className = 'env-select-button';
+    this.envSelectButton.setAttribute('aria-haspopup', 'listbox');
+    this.envSelectButton.setAttribute('aria-expanded', 'false');
+    this.envSelectText = document.createElement('span');
+    this.envSelectText.className = 'env-select-button-text';
+    const arrow = document.createElement('span');
+    arrow.className = 'env-select-arrow';
+    arrow.textContent = 'v';
+    this.envSelectButton.append(this.envSelectText, arrow);
+    this.envSelectButton.addEventListener('click', () => {
+      if (this.envSelectPopover?.isConnected && !this.envSelectPopover.hidden) this.closeEnvironmentMenu();
+      else this.openEnvironmentMenu();
+    });
+    this.envSelectButton.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.openEnvironmentMenu(true);
+      }
+    });
+
+    this.envSelectPopover = document.createElement('div');
+    this.envSelectPopover.className = 'env-select-popover';
+    this.envSelectPopover.hidden = true;
+    const list = document.createElement('div');
+    list.className = 'env-select-list';
+    list.setAttribute('role', 'listbox');
+    for (const name of this.envNames) {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'env-select-option';
+      option.dataset.envName = name;
+      option.setAttribute('role', 'option');
+      option.textContent = this.environmentLabel(name);
+      option.title = this.environmentLabel(name);
+      option.addEventListener('mouseenter', () => this.setEnvironmentMenuPreview(name));
+      option.addEventListener('focus', () => this.setEnvironmentMenuPreview(name));
+      option.addEventListener('click', () => {
+        this.closeEnvironmentMenu();
+        void this.loadEnvironment(name);
+      });
+      option.addEventListener('keydown', (e) => this.handleEnvironmentOptionKey(e, option));
+      list.append(option);
+    }
+
+    const preview = document.createElement('div');
+    preview.className = 'env-select-preview';
+    this.envSelectPreviewImg = document.createElement('img');
+    this.envSelectPreviewImg.alt = '';
+    this.envSelectPreviewImg.loading = 'lazy';
+    this.envSelectPreviewImg.decoding = 'async';
+    this.envSelectPreviewName = document.createElement('span');
+    this.envSelectPreviewName.className = 'env-select-preview-name';
+    preview.append(this.envSelectPreviewImg, this.envSelectPreviewName);
+    this.envSelectPopover.append(list, preview);
+
+    wrap.append(this.envSelectButton);
+    row.append(label, wrap);
+    this.updateEnvironmentSelectButton();
+    return row;
+  }
+
+  private openEnvironmentMenu(focusSelected = false): void {
+    if (!this.envSelectPopover || !this.envSelectButton) return;
+    document.body.append(this.envSelectPopover);
+    this.envSelectPopover.hidden = false;
+    this.envSelectButton.setAttribute('aria-expanded', 'true');
+    this.positionEnvironmentMenu();
+    this.syncEnvironmentOptionSelection();
+    this.setEnvironmentMenuPreview(this.envName);
+    document.addEventListener('pointerdown', this.closeEnvironmentMenuOnOutsidePointer);
+    window.addEventListener('resize', this.closeEnvironmentMenuOnWindowChange);
+    const selected = this.environmentOption(this.envName);
+    selected?.scrollIntoView({ block: 'nearest' });
+    if (focusSelected) selected?.focus();
+  }
+
+  private closeEnvironmentMenu(): void {
+    if (!this.envSelectPopover) return;
+    this.envSelectPopover.hidden = true;
+    this.envSelectPopover.remove();
+    this.envSelectButton?.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', this.closeEnvironmentMenuOnOutsidePointer);
+    window.removeEventListener('resize', this.closeEnvironmentMenuOnWindowChange);
+  }
+
+  private positionEnvironmentMenu(): void {
+    if (!this.envSelectButton || !this.envSelectPopover) return;
+    const rect = this.envSelectButton.getBoundingClientRect();
+    const margin = 8;
+    const gap = 4;
+    const width = Math.min(window.innerWidth - margin * 2, Math.max(520, rect.width + 240));
+    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+    const spaceBelow = window.innerHeight - rect.bottom - gap - margin;
+    const spaceAbove = rect.top - gap - margin;
+    const openAbove = spaceBelow < 240 && spaceAbove > spaceBelow;
+    const availableHeight = openAbove ? spaceAbove : spaceBelow;
+    const maxHeight = Math.max(160, Math.min(390, availableHeight));
+    const top = openAbove ? Math.max(margin, rect.top - gap - maxHeight) : rect.bottom + gap;
+    this.envSelectPopover.style.left = `${left}px`;
+    this.envSelectPopover.style.top = `${top}px`;
+    this.envSelectPopover.style.width = `${width}px`;
+    this.envSelectPopover.style.maxHeight = `${maxHeight}px`;
+    this.envSelectPopover.style.setProperty('--env-select-max-height', `${maxHeight}px`);
+    this.envSelectPopover.dataset.placement = openAbove ? 'top' : 'bottom';
+  }
+
+  private updateEnvironmentSelectButton(): void {
+    if (this.envSelectText) {
+      const text = this.environmentLabel(this.envName);
+      this.envSelectText.textContent = text;
+      this.envSelectText.title = text;
+    }
+    this.syncEnvironmentOptionSelection();
+    this.setEnvironmentMenuPreview(this.envName);
+  }
+
+  private syncEnvironmentOptionSelection(): void {
+    if (!this.envSelectPopover) return;
+    for (const option of this.envSelectPopover.querySelectorAll<HTMLElement>('.env-select-option')) {
+      option.setAttribute('aria-selected', String(option.dataset.envName === this.envName));
+    }
+  }
+
+  private setEnvironmentMenuPreview(name: string): void {
+    if (!this.envSelectPreviewImg || !this.envSelectPreviewName) return;
+    const thumb = this.envThumbs[name];
+    this.envSelectPreviewImg.hidden = !thumb;
+    if (thumb) this.envSelectPreviewImg.src = `${import.meta.env.BASE_URL}environment-thumbs/${thumb}`;
+    const text = this.environmentLabel(name);
+    this.envSelectPreviewName.textContent = text;
+    this.envSelectPreviewName.title = text;
+  }
+
+  private handleEnvironmentOptionKey(e: KeyboardEvent, option: HTMLButtonElement): void {
+    if (!this.envSelectPopover) return;
+    const options = [...this.envSelectPopover.querySelectorAll<HTMLButtonElement>('.env-select-option')];
+    const index = options.indexOf(option);
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      this.closeEnvironmentMenu();
+      this.envSelectButton?.focus();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = e.key === 'ArrowDown' ? Math.min(options.length - 1, index + 1) : Math.max(0, index - 1);
+      options[next]?.focus();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      const name = option.dataset.envName;
+      if (!name) return;
+      this.closeEnvironmentMenu();
+      void this.loadEnvironment(name);
+    }
+  }
+
+  private environmentOption(name: string): HTMLButtonElement | null {
+    if (!this.envSelectPopover) return null;
+    return (
+      [...this.envSelectPopover.querySelectorAll<HTMLButtonElement>('.env-select-option')].find(
+        (option) => option.dataset.envName === name,
+      ) ?? null
+    );
+  }
+
+  private environmentLabel(name: string): string {
+    return name.replace(/\.(hdr|exr)$/i, '');
   }
 
   private setupInteraction(): void {

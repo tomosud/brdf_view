@@ -5,4 +5,5 @@ dist
 # Large / licensed assets bundled for local dev only (see scripts/copy-assets.ts)
 public/measured
 public/environments
+public/environment-thumbs
 public/obj

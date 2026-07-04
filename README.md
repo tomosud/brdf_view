@@ -98,9 +98,11 @@ npm run build
 
 - `sample/brdf/*.brdf` -> `web/public/brdfs/index.json`
 - `assets/*.hdr` / `assets/*.exr` -> `web/public/environments/index.json`
+- `assets/*.hdr` -> `web/public/environment-thumbs/*.png`
 - `assets/obj/*.obj` -> `web/public/obj/index.json`
 
-`web/public/environments`、`web/public/obj`、`web/dist` は生成物として
+`web/public/environments`、`web/public/environment-thumbs`、
+`web/public/obj`、`web/dist` は生成物として
 gitignore しています。HDRI を追加する場合は `assets/` に置いて commit し、
 `npm run build` で `web/dist` に反映されることを確認してください。
 

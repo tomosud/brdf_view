@@ -58,10 +58,11 @@ async function main(): Promise<void> {
   // Lit Object (IBL) — needs the equirect HDRI environment.
   try {
     const envNames = prioritize(await fetchJson<string[]>(`${import.meta.env.BASE_URL}environments/index.json`).catch(() => ['ibl.hdr']), 'ibl.hdr');
+    const envThumbs = await fetchJson<Record<string, string>>(`${import.meta.env.BASE_URL}environment-thumbs/index.json`).catch(() => ({}));
     const objNames = await fetchJson<string[]>(`${import.meta.env.BASE_URL}obj/index.json`).catch(() => []);
     const res = await fetch(`${import.meta.env.BASE_URL}environments/${envNames[0]}`);
     if (res.ok) {
-      new LitObjectView(viewRows.bottom, store, parseHdr(await res.arrayBuffer()), envNames, objNames);
+      new LitObjectView(viewRows.bottom, store, parseHdr(await res.arrayBuffer()), envNames, objNames, envThumbs);
     } else {
       console.warn('IBL environment not found; Lit Object view skipped.');
     }
