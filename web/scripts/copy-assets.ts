@@ -10,7 +10,7 @@
  * NOTE: shaderTemplates under public/ are hand-ported to GLSL ES 3.00 and are
  * authored directly in this repo — they are NOT copied from the source.
  */
-import { existsSync, mkdirSync, readdirSync, copyFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, copyFileSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,6 +24,18 @@ function ensureDir(dir: string): void {
   mkdirSync(dir, { recursive: true });
 }
 
+function copyIfChanged(from: string, to: string): boolean {
+  if (existsSync(to)) {
+    const fromStat = statSync(from);
+    const toStat = statSync(to);
+    if (fromStat.size === toStat.size && readFileSync(from).equals(readFileSync(to))) {
+      return false;
+    }
+  }
+  copyFileSync(from, to);
+  return true;
+}
+
 function copyByExt(fromDir: string, toDir: string, exts: string[]): number {
   if (!existsSync(fromDir)) return 0;
   ensureDir(toDir);
@@ -32,8 +44,7 @@ function copyByExt(fromDir: string, toDir: string, exts: string[]): number {
     const from = join(fromDir, name);
     if (!statSync(from).isFile()) continue;
     if (!exts.some((e) => name.toLowerCase().endsWith(e))) continue;
-    copyFileSync(from, join(toDir, name));
-    n++;
+    if (copyIfChanged(from, join(toDir, name))) n++;
   }
   return n;
 }
@@ -57,8 +68,7 @@ function copyFiles(fromDir: string, toDir: string, names: string[]): number {
   for (const name of names) {
     const from = join(fromDir, name);
     if (existsSync(from)) {
-      copyFileSync(from, join(toDir, name));
-      n++;
+      if (copyIfChanged(from, join(toDir, name))) n++;
     }
   }
   return n;

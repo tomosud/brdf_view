@@ -93,6 +93,43 @@ cd web
 npm run build
 ```
 
+`npm run build` の前に `web/scripts/copy-assets.ts` が実行され、以下を
+`web/public/` にコピーして manifest を作ります。
+
+- `sample/brdf/*.brdf` -> `web/public/brdfs/index.json`
+- `assets/*.hdr` / `assets/*.exr` -> `web/public/environments/index.json`
+- `assets/obj/*.obj` -> `web/public/obj/index.json`
+
+`web/public/environments`、`web/public/obj`、`web/dist` は生成物として
+gitignore しています。HDRI を追加する場合は `assets/` に置いて commit し、
+`npm run build` で `web/dist` に反映されることを確認してください。
+
+GitHub Pages と同じ `/brdf_view/` prefix でローカル確認する場合:
+
+```powershell
+cd web
+npm run build
+cd ..
+.\serve_pages_local.bat
+```
+
+`serve_pages_local.bat` は `web/dist` を `http://localhost:4173/brdf_view/`
+で配信します。
+
+## GitHub Pages
+
+GitHub Pages は `.github/workflows/pages.yml` で `main` への push または
+手動実行時に deploy されます。Action は `web` ディレクトリで以下を実行します。
+
+```powershell
+npm ci
+npm run build
+```
+
+その後 `web/dist` を Pages artifact として upload します。追加した HDRI は
+`assets/` に commit されていれば、Action の build 時に自動で
+`environments/index.json` と `web/dist/environments/` に入ります。
+
 ## Attribution
 
 This project is based on the Disney BRDF Explorer.

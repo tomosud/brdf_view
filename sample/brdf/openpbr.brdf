@@ -1,10 +1,40 @@
 analytic
 
-# OpenPBR Surface — opaque subset (+ thin-film interference)
-# Layers (outer to inner): Coat -> Fuzz -> Thin-film -> Specular + Diffuse
-# Reference: https://github.com/AcademySoftwareFoundation/OpenPBR
+# OpenPBR Surface - opaque subset, rebuilt against the reference implementations:
+#   - OpenPBR-viewer (Portsmouth), glsl/pathtracing/*.glsl  [layer structure, lobe math]
+#   - openpbr-bsdf (Adobe, OpenPBR 1.1), impl/*.h           [specular_weight semantics]
 #
-# Omitted (require BSDF/volume): transmission, subsurface, emission
+# Layer structure (outermost to innermost), matching openpbr_surface.glsl:
+#   fuzz -> coat -> { metal | dielectric (specular + diffuse) }
+#
+#   f = w_fuzz * f_fuzz
+#     + w_coat * f_coat
+#     + w_metal * f_metal
+#     + w_spec  * f_spec
+#     + w_diff  * f_diff
+#
+#   w_coated_base = mix(1, 1 - E_fuzz(V), fuzz_weight)
+#   w_base = w_coated_base * mix(1, darkening * coat_color * (1 - E_coat(V)), coat_weight)
+#   (coat darkening per OpenPBR PR #253; coat reflection itself is NOT tinted,
+#    coat_color acts as transmission tint of the coat medium)
+#
+# Lobe models (as in the reference viewer):
+#   diffuse : EON exact (Portsmouth/Kutz/Hill, arXiv:2410.18026), white, tinted by weight
+#   specular: GGX (height-correlated Smith), dielectric Fresnel with specular_weight
+#             applied via modulated IOR (PR #247; applied once, per Adobe impl and spec)
+#   metal   : GGX + F82-tint conductor Fresnel (PR #256 clamp), scaled by specular_weight
+#   coat    : GGX + exact dielectric Fresnel (coat_ior)
+#   fuzz    : Zeltner sheen LTC (rational fits from the viewer, no LUT)
+#   thinfilm: Airy summation with complex arithmetic (Kutz & Portsmouth), evaluated at
+#             RGB wavelengths 630/532/450 nm; conductor substrate via Gulbrandsen n,k
+#
+# Analytic substitutions (single pixel-local BRDF, no sampling):
+#   - Directional albedos E_coat/E_spec use an analytic GGX split-sum fit
+#     (UE ShadingEnergyConservation analytic path) instead of Monte-Carlo estimates.
+#   - Thin film is RGB (3 wavelengths) instead of hero-wavelength spectral sampling.
+#
+# Omitted (require BSDF/volume/extra state): transmission, subsurface, emission,
+#   coat anisotropy + rotations, specular haze/retroreflectivity, dispersion.
 
 ::begin parameters
 color base_color 0.45882353 0.45882353 0.45882353
@@ -23,6 +53,7 @@ float coat_weight 0.0 1.0 0.0
 color coat_color 1.0 1.0 1.0
 float coat_roughness 0.0 1.0 0.0
 float coat_ior 1.0 3.0 1.6
+float coat_darkening 0.0 1.0 1.0
 float fuzz_weight 0.0 1.0 0.0
 color fuzz_color 1.0 1.0 1.0
 float fuzz_roughness 0.0 1.0 0.5
@@ -31,170 +62,456 @@ float fuzz_roughness 0.0 1.0 0.5
 ::begin shader
 
 const float PI = 3.14159265358979323846;
+const float DENOM_TOLERANCE = 0.0000001;
+const float MIN_ALPHA = 0.0001;
 
 float sqr(float x) { return x * x; }
-
-float schlick5(float cosTheta) {
-    float m = clamp(1.0 - cosTheta, 0.0, 1.0);
-    return m * m * m * m * m;
-}
-
-float iorToF0(float ior) {
-    float r = (ior - 1.0) / (ior + 1.0);
-    return r * r;
-}
+float pow5(float x) { float x2 = x * x; return x2 * x2 * x; }
+float pow6(float x) { float x2 = x * x; return x2 * x2 * x2; }
+float saturate(float x) { return clamp(x, 0.0, 1.0); }
+vec3 saturate3(vec3 x) { return clamp(x, vec3(0.0), vec3(1.0)); }
 
 vec3 mon2lin(vec3 x) {
     return vec3(pow(x[0], 2.2), pow(x[1], 2.2), pow(x[2], 2.2));
 }
 
-vec3 fresnelSchlick(float cosTheta, vec3 F0) {
-    return F0 + (vec3(1.0) - F0) * schlick5(cosTheta);
+// ───────────────────────────── Fresnel ─────────────────────────────
+
+// Exact unpolarized dielectric Fresnel reflectance.
+// mui = |cos| of incident angle, eta_ti = n_transmitted / n_incident.
+float fresnelDielectric(float mui, float eta_ti) {
+    float c = mui;
+    float mut2 = sqr(eta_ti) + sqr(c) - 1.0;
+    if (mut2 <= 0.0) return 1.0; // TIR
+    float g = sqrt(mut2);
+    return 0.5 * sqr((g - c) / (g + c)) * (1.0 + sqr(((g + c) * c - 1.0) / ((g - c) * c + 1.0)));
 }
 
-// Anisotropic GGX NDF (Burley 2012)
-float ggxD(float NdotH, float HdotX, float HdotY, float ax, float ay) {
-    float d = sqr(HdotX / ax) + sqr(HdotY / ay) + sqr(NdotH);
-    return 1.0 / (PI * ax * ay * sqr(d));
+// PR #247: specular_weight modulates F0 linearly via a modified IOR,
+// without disturbing the refraction direction (decoupled IOR).
+float fresnelDielectricModulated(float mui, float eta_ti, float weight) {
+    float etam1 = eta_ti - 1.0;
+    if (sqr(etam1) < DENOM_TOLERANCE) return 0.0;
+    if (weight != 1.0) {
+        float F0 = sqr(etam1) / sqr(1.0 + eta_ti);
+        float epsilon = sign(etam1) * sqrt(clamp(weight * F0, 0.0, 1.0));
+        float eta_prime = (1.0 + epsilon) / max(1.0 - epsilon, DENOM_TOLERANCE);
+        if (eta_prime >= 1.0) {
+            return fresnelDielectric(mui, eta_prime);
+        } else {
+            float mu2_t = 1.0 - (1.0 - sqr(mui)) / sqr(eta_ti);
+            if (mu2_t <= 0.0) return 1.0; // TIR at the unmodified IOR
+            return fresnelDielectric(sqrt(mu2_t), 1.0 / eta_prime);
+        }
+    }
+    return fresnelDielectric(mui, eta_ti);
 }
 
-// G2 / (4 NdotL NdotV) — separable Smith GGX anisotropic (Heitz 2014)
-float ggxV(float NdotL, float NdotV,
-           float LdotX, float LdotY, float VdotX, float VdotY,
-           float ax, float ay) {
-    float aL = length(vec3(ax * LdotX, ay * LdotY, NdotL));
-    float aV = length(vec3(ax * VdotX, ay * VdotY, NdotV));
-    return 1.0 / ((NdotL + aL) * (NdotV + aV));
+vec3 fresnelSchlick(vec3 F0, float mu) {
+    return F0 + pow5(1.0 - mu) * (vec3(1.0) - F0);
 }
 
-// EON: energy-preserving Oren-Nayar (arXiv:2410.18026, Portsmouth et al. 2025)
-// Returns f(L,V) / albedo; caller multiplies by base_color.
-float eonDiffuse(float NdotL, float NdotV, float LdotV, float roughness) {
-    float s      = LdotV - NdotL * NdotV;
-    float t      = s <= 0.0 ? 1.0 : max(NdotL, NdotV);
-    float sigma2 = roughness * roughness;
-    float A      = 1.0 / (1.0 + 0.5 * sigma2);
-    float f_qon  = A * (1.0 + sigma2 * s / t) / PI;
-    float E_avg  = 1.0 - sigma2 * (0.4284 + sigma2 * (-0.0576 + sigma2 * 0.0564));
-    float kappa  = (1.0 - E_avg) / (PI * max(E_avg, 0.001));
-    return f_qon + kappa;
+// F82-tint conductor Fresnel (Kutz et al., Adobe Standard Material), PR #256 clamp.
+vec3 fresnelF82Tint(float mu, vec3 F0, vec3 F82tint) {
+    const float mu_bar = 1.0 / 7.0;
+    float denom = mu_bar * pow6(1.0 - mu_bar);
+    vec3 Fschlick_bar = fresnelSchlick(F0, mu_bar);
+    vec3 Fschlick = fresnelSchlick(F0, mu);
+    return clamp(Fschlick - mu * pow6(1.0 - mu) * (vec3(1.0) - F82tint) * Fschlick_bar / denom,
+                 vec3(0.0), vec3(1.0));
 }
 
-// Charlie sheen NDF (Neubelt & Pettineo 2013)
-float charlieD(float NdotH, float roughness) {
-    float r     = max(roughness, 0.001);
-    float sin2h = max(1.0 - NdotH * NdotH, 0.0078125);
-    return (2.0 + 1.0 / r) * pow(sin2h, 0.5 / r) / (2.0 * PI);
+// Hemispherical average of the dielectric Fresnel factor (viewer E_F / DielectricFresnelAvg).
+float fresnelDielectricAvgRaw(float eta) {
+    return log((10893.0 * eta - 1438.2) / (-774.4 * sqr(eta) + 10212.0 * eta + 1.0));
+}
+float fresnelDielectricAvg(float eta) {
+    if (eta > 1.0) return fresnelDielectricAvgRaw(eta);
+    if (eta < 1.0) return 1.0 - sqr(eta) * (1.0 - fresnelDielectricAvgRaw(1.0 / eta));
+    return 0.0;
 }
 
-// Ashikhmin visibility for sheen: G2 / (4 NdotL NdotV)
-float sheenV(float NdotL, float NdotV) {
-    return 1.0 / (4.0 * (NdotL + NdotV - NdotL * NdotV));
+float iorToF0(float ior) {
+    return sqr((ior - 1.0) / (ior + 1.0));
 }
 
-// Thin-film interference Fresnel (Belcour & Barla 2017)
-// Returns per-wavelength (RGB) reflectance for a three-layer stack:
-//   eta1 (above film, air=1.0) | eta2 (film) | eta3 (substrate, specular_ior)
-// thickness: film thickness in micrometers (μm).
-// Representative wavelengths: R=630nm, G=532nm, B=450nm.
-vec3 thinFilmFresnel(float cosTheta1, float eta1, float eta2, float eta3, float thickness) {
-    float sin2_1   = max(0.0, 1.0 - cosTheta1 * cosTheta1);
+// ───────────────────────────── GGX ─────────────────────────────
+// All directions below are in the local shading frame: w = (dot(w,X), dot(w,Y), dot(w,N)).
 
-    // Snell's law into film and substrate
-    float cosTheta2 = sqrt(max(0.0, 1.0 - sin2_1 * sqr(eta1 / eta2)));
-    float cosTheta3 = sqrt(max(0.0, 1.0 - sin2_1 * sqr(eta1 / eta3)));
-
-    // Fresnel at air/film and film/substrate (S and P polarisations)
-    float r12s = (eta1 * cosTheta1 - eta2 * cosTheta2) / (eta1 * cosTheta1 + eta2 * cosTheta2);
-    float r12p = (eta2 * cosTheta1 - eta1 * cosTheta2) / (eta2 * cosTheta1 + eta1 * cosTheta2);
-    float r23s = (eta2 * cosTheta2 - eta3 * cosTheta3) / (eta2 * cosTheta2 + eta3 * cosTheta3);
-    float r23p = (eta3 * cosTheta2 - eta2 * cosTheta3) / (eta3 * cosTheta2 + eta2 * cosTheta3);
-
-    // Optical path difference (OPD) in nm; thickness_nm = thickness * 1000
-    float OPD = 2.0 * eta2 * (thickness * 1000.0) * cosTheta2;
-
-    // Per-wavelength phase shift (R=630nm, G=532nm, B=450nm)
-    vec3 phi = (2.0 * PI * OPD) / vec3(630.0, 532.0, 450.0);
-    vec3 cosPhi = cos(phi);
-
-    // Airy reflectance (first-order amplitude summation)
-    float s2 = r12s * r12s, u2 = r23s * r23s;
-    float p2 = r12p * r12p, v2 = r23p * r23p;
-    vec3 Rs = (s2 + u2 + 2.0 * r12s * r23s * cosPhi) /
-              (1.0 + s2 * u2 + 2.0 * r12s * r23s * cosPhi);
-    vec3 Rp = (p2 + v2 + 2.0 * r12p * r23p * cosPhi) /
-              (1.0 + p2 * v2 + 2.0 * r12p * r23p * cosPhi);
-
-    return clamp(0.5 * (Rs + Rp), vec3(0.0), vec3(1.0));
+// OpenPBR anisotropic alpha mapping (specular_ndf_roughnesses in the viewer).
+void ndfAlphas(float rough, float aniso, out float alpha_x, out float alpha_y) {
+    float rsqr = sqr(rough);
+    alpha_x = rsqr * sqrt(2.0 / (1.0 + sqr(1.0 - aniso)));
+    alpha_y = (1.0 - aniso) * alpha_x;
+    alpha_x = max(MIN_ALPHA, alpha_x);
+    alpha_y = max(MIN_ALPHA, alpha_y);
 }
+
+float ggxNDF(vec3 m, float alpha_x, float alpha_y) {
+    float ax = max(alpha_x, DENOM_TOLERANCE);
+    float ay = max(alpha_y, DENOM_TOLERANCE);
+    float Ddenom = PI * ax * ay * sqr(sqr(m.x / ax) + sqr(m.y / ay) + sqr(m.z));
+    return 1.0 / max(Ddenom, DENOM_TOLERANCE);
+}
+
+float ggxLambda(vec3 w, float alpha_x, float alpha_y) {
+    if (abs(w.z) < DENOM_TOLERANCE) return 0.0;
+    return (-1.0 + sqrt(1.0 + (sqr(alpha_x * w.x) + sqr(alpha_y * w.y)) / sqr(w.z))) / 2.0;
+}
+
+// Height-correlated Smith shadowing-masking (viewer ggx_G2).
+float ggxG2(vec3 woL, vec3 wiL, float alpha_x, float alpha_y) {
+    return 1.0 / (1.0 + ggxLambda(woL, alpha_x, alpha_y) + ggxLambda(wiL, alpha_x, alpha_y));
+}
+
+// Analytic GGX directional albedo (split-sum fit; stands in for the viewer's
+// Monte-Carlo lobe albedo estimates). F90 = 1.
+float ggxDirAlbedo(float rough, float NoV, float F0) {
+    float r = clamp(rough, 0.001, 1.0);
+    float c = saturate(NoV);
+    float e = 1.0 - saturate(pow(r, c / r) * ((r * c + 0.0266916) / (0.466495 + c)));
+    float ef = pow5(1.0 - c) * pow(2.36651 * pow(c, 4.7703 * r) + 0.0387332, r);
+    return saturate(e * F0 + ef * (1.0 - F0));
+}
+
+// ───────────────────────────── EON diffuse ─────────────────────────────
+// "EON: A practical energy-preserving rough diffuse BRDF" (arXiv:2410.18026),
+// exact FON directional albedo, evaluated white (color applied via lobe weight,
+// following the viewer's non-reciprocal albedo-scaling convention).
+
+const float constant1_FON = 0.5 - 2.0 / (3.0 * PI);
+const float constant2_FON = 2.0 / 3.0 - 28.0 / (15.0 * PI);
+
+float E_FON_exact(float mu, float r) {
+    float AF = 1.0 / (1.0 + constant1_FON * r);
+    float BF = r * AF;
+    float Si = sqrt(max(0.0, 1.0 - mu * mu));
+    float G = Si * (acos(clamp(mu, -1.0, 1.0)) - Si * mu)
+            + (2.0 / 3.0) * ((Si / max(mu, DENOM_TOLERANCE)) * (1.0 - Si * Si * Si) - Si);
+    return AF + (BF / PI) * G;
+}
+
+// f_EON with rho = 1 (white). Caller multiplies by base color via the lobe weight.
+float f_EON_white(float r, float mu_i, float mu_o, float cosLV) {
+    float s = cosLV - mu_i * mu_o;
+    float sovertF = s > 0.0 ? s / max(mu_i, mu_o) : s;
+    float AF = 1.0 / (1.0 + constant1_FON * r);
+    float f_ss = (1.0 / PI) * AF * (1.0 + r * sovertF);
+    float EFo = E_FON_exact(mu_o, r);
+    float EFi = E_FON_exact(mu_i, r);
+    float avgEF = AF * (1.0 + constant2_FON * r);
+    // rho = 1 => rho_ms = avgEF / (1 - (1 - avgEF)) = 1
+    float f_ms = (1.0 / PI) * max(DENOM_TOLERANCE, 1.0 - EFo)
+                            * max(DENOM_TOLERANCE, 1.0 - EFi)
+                            / max(DENOM_TOLERANCE, 1.0 - avgEF);
+    return f_ss + f_ms;
+}
+
+// ───────────────────────────── Zeltner sheen (fuzz) ─────────────────────────────
+// Rational fits from the viewer's fuzz_brdf.glsl (Zeltner/Burley/Chiang LTC sheen).
+
+float zeltnerSheenDirAlbedo(float x, float y) {
+    float s = y * (0.0206607 + 1.58491 * y) / (0.0379424 + y * (1.32227 + y));
+    float m = y * (-0.193854 + y * (-1.14885 + y * (1.7932 - 0.95943 * y * y))) / (0.046391 + y);
+    float o = y * (0.000654023 + (-0.0207818 + 0.119681 * y) * y) / (1.26264 + y * (-1.92021 + y));
+    return exp(-0.5 * sqr((x - m) / s)) / (s * sqrt(2.0 * PI)) + o;
+}
+
+float zeltnerSheenLtcAInv(float x, float y) {
+    return (2.58126 * x + 0.813703 * y) * y / (1.0 + 0.310327 * x * x + 2.60994 * x * y);
+}
+
+float zeltnerSheenLtcBInv(float x, float y) {
+    return sqrt(1.0 - x) * (y - 1.0) * y * y * y / (0.0000254053 + 1.71228 * x - 1.71506 * x * y + 1.34174 * y * y);
+}
+
+// Evaluate the sheen LTC lobe. VL, LL are the local view/light directions.
+// Returns f (without fuzz_color), matching fuzz_brdf_evaluate in the viewer.
+float fuzzEval(vec3 VL, vec3 LL, float rough) {
+    if (VL.z < DENOM_TOLERANCE || LL.z < DENOM_TOLERANCE) return 0.0;
+    float NdotV = min(VL.z, 1.0);
+    float r = clamp(rough, 0.01, 1.0);
+
+    // LTC frame: x-axis aligned with the view azimuth, z = N.
+    float lenSqr = VL.x * VL.x + VL.y * VL.y;
+    float tx;
+    float ty;
+    if (lenSqr > 0.0) {
+        float inv = inversesqrt(lenSqr);
+        tx = VL.x * inv;
+        ty = VL.y * inv;
+    } else {
+        tx = 1.0;
+        ty = 0.0;
+    }
+    // w = transpose(toLTC) * LL, with basis X=(tx,ty,0), Y=(-ty,tx,0), Z=(0,0,1)
+    vec3 w = vec3(tx * LL.x + ty * LL.y, -ty * LL.x + tx * LL.y, LL.z);
+
+    float aInv = zeltnerSheenLtcAInv(NdotV, r);
+    float bInv = zeltnerSheenLtcBInv(NdotV, r);
+    vec3 wo = vec3(aInv * w.x + bInv * w.z, aInv * w.y, w.z);
+    float len2 = dot(wo, wo);
+
+    float jacobian = sqr(aInv / max(len2, DENOM_TOLERANCE));
+    float pdf = max(wo.z, 0.0) / PI * jacobian;
+    float albedo = zeltnerSheenDirAlbedo(NdotV, r);
+    float NdotL = max(abs(LL.z), DENOM_TOLERANCE);
+    return albedo * pdf / NdotL;
+}
+
+// ───────────────────────────── Thin film (Airy, complex) ─────────────────────────────
+// Kutz & Portsmouth, "Thin-Film Iridescence via Complex Arithmetic" (viewer thin-film.glsl).
+// Complex numbers as vec2(re, im).
+
+vec2 cxMul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+float cxAbs2(vec2 z) { return z.x * z.x + z.y * z.y; }
+vec2 cxDiv(vec2 a, vec2 b) {
+    float d = max(cxAbs2(b), DENOM_TOLERANCE * DENOM_TOLERANCE);
+    return vec2(a.x * b.x + a.y * b.y, a.y * b.x - a.x * b.y) / d;
+}
+vec2 cxExp(vec2 z) { return exp(z.x) * vec2(cos(z.y), sin(z.y)); }
+vec2 cxSqrt(vec2 z) {
+    float r = length(z);
+    if (r < DENOM_TOLERANCE * DENOM_TOLERANCE) return vec2(0.0);
+    float half_angle = 0.5 * atan(z.y, z.x);
+    return sqrt(r) * vec2(cos(half_angle), sin(half_angle));
+}
+
+// Snell (complex): cos of refracted angle. Branch: Im(n_t * cos_t) >= 0.
+vec2 cosRefracted(vec2 cos_i, vec2 n_i, vec2 n_t) {
+    vec2 sin_i_sq = vec2(1.0, 0.0) - cxMul(cos_i, cos_i);
+    vec2 ratio = cxDiv(n_i, n_t);
+    vec2 sin_t_sq = cxMul(cxMul(ratio, ratio), sin_i_sq);
+    vec2 cos_t = cxSqrt(vec2(1.0, 0.0) - sin_t_sq);
+    if (cxMul(n_t, cos_t).y < 0.0) cos_t = -cos_t;
+    return cos_t;
+}
+
+// Unpolarized thin-film power reflectance via 6-step Airy summation.
+// cos_1 in (0,1], n_1/n_2 real ambient/film IORs, n_3 complex substrate IOR,
+// d film thickness (nm), lambda vacuum wavelength (nm).
+float thinFilmR(float cos_1, float n_1, float n_2, vec2 n_3, float d, float lambda) {
+    vec2 cn1 = vec2(n_1, 0.0);
+    vec2 cn2 = vec2(n_2, 0.0);
+    vec2 ccos1 = vec2(cos_1, 0.0);
+
+    vec2 cos_2 = cosRefracted(ccos1, cn1, cn2);
+    vec2 cos_3 = cosRefracted(cos_2, cn2, n_3);
+
+    // Fresnel amplitude coefficients at 1->2
+    vec2 n1c1 = cxMul(cn1, ccos1);
+    vec2 n2c2 = cxMul(cn2, cos_2);
+    vec2 n1c2 = cxMul(cn1, cos_2);
+    vec2 n2c1 = cxMul(cn2, ccos1);
+    vec2 r12_s = cxDiv(n1c1 - n2c2, n1c1 + n2c2);
+    vec2 t12_s = cxDiv(2.0 * n1c1, n1c1 + n2c2);
+    vec2 r12_p = cxDiv(n2c1 - n1c2, n2c1 + n1c2);
+    vec2 t12_p = cxDiv(2.0 * n1c1, n2c1 + n1c2);
+
+    // Fresnel amplitude coefficients at 2->3
+    vec2 n3c3 = cxMul(n_3, cos_3);
+    vec2 n2c3 = cxMul(cn2, cos_3);
+    vec2 n3c2 = cxMul(n_3, cos_2);
+    vec2 r23_s = cxDiv(n2c2 - n3c3, n2c2 + n3c3);
+    vec2 r23_p = cxDiv(n3c2 - n2c3, n3c2 + n2c3);
+
+    // Reciprocity for 2->1
+    vec2 r21_s = -r12_s;
+    vec2 r21_p = -r12_p;
+    vec2 ratio = cxDiv(n2c2, n1c1);
+    vec2 t21_s = cxMul(t12_s, ratio);
+    vec2 t21_p = cxMul(t12_p, ratio);
+
+    // Round-trip phase shift: delta = 4 pi n2 d cos_2 / lambda
+    vec2 delta = (4.0 * PI * n_2 * d / lambda) * cos_2;
+    vec2 phase = cxExp(vec2(-delta.y, delta.x)); // exp(i * delta)
+
+    // Airy summation: r_tot = r12 + t12 r23 t21 phi / (1 - r21 r23 phi)
+    vec2 denom_s = vec2(1.0, 0.0) - cxMul(r21_s, cxMul(r23_s, phase));
+    vec2 numer_s = cxMul(t12_s, cxMul(r23_s, cxMul(t21_s, phase)));
+    vec2 r_s = r12_s + cxDiv(numer_s, denom_s);
+
+    vec2 denom_p = vec2(1.0, 0.0) - cxMul(r21_p, cxMul(r23_p, phase));
+    vec2 numer_p = cxMul(t12_p, cxMul(r23_p, cxMul(t21_p, phase)));
+    vec2 r_p = r12_p + cxDiv(numer_p, denom_p);
+
+    float R = 0.5 * (cxAbs2(r_s) + cxAbs2(r_p));
+    return clamp(R, 0.0, 1.0);
+}
+
+// "Artist Friendly Metallic Fresnel" (Gulbrandsen 2014): map F0/edgetint to complex IOR.
+void gulbrandsenMapping(vec3 F0, vec3 edgetint, out vec3 n, out vec3 k) {
+    vec3 r = clamp(F0, vec3(0.0), vec3(0.99));
+    vec3 g = edgetint;
+    vec3 r_sqrt = sqrt(r);
+    vec3 n_min = (vec3(1.0) - r) / (vec3(1.0) + r);
+    vec3 n_max = (vec3(1.0) + r_sqrt) / (vec3(1.0) - r_sqrt);
+    n = mix(n_max, n_min, g);
+    vec3 k2 = ((n + vec3(1.0)) * (n + vec3(1.0)) * r - (n - vec3(1.0)) * (n - vec3(1.0))) / (vec3(1.0) - r);
+    k = sqrt(max(vec3(0.0), k2));
+}
+
+// ───────────────────────────── BRDF ─────────────────────────────
 
 vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
-    float NdotL = dot(N, L);
-    float NdotV = dot(N, V);
-    if (NdotL < 0.0 || NdotV < 0.0) return vec3(0.0);
-    NdotL = clamp(NdotL, 0.0001, 1.0);
-    NdotV = clamp(NdotV, 0.0001, 1.0);
+    float NoL = dot(N, L);
+    float NoV = dot(N, V);
+    if (NoL <= 0.0 || NoV <= 0.0) return vec3(0.0);
 
-    vec3  H     = normalize(L + V);
-    float NdotH = clamp(dot(N, H), 0.0, 1.0);
-    float LdotH = clamp(dot(L, H), 0.0, 1.0);
-    float LdotV = dot(L, V);
+    // Local frame directions (z = N)
+    vec3 VL = vec3(dot(V, X), dot(V, Y), NoV);
+    vec3 LL = vec3(dot(L, X), dot(L, Y), NoL);
+    vec3 H = normalize(L + V);
+    vec3 HL = vec3(dot(H, X), dot(H, Y), dot(H, N));
+    float VoH = clamp(dot(V, H), 0.0, 1.0);
+    float cosLV = dot(L, V);
+    NoL = min(NoL, 1.0);
+    NoV = min(NoV, 1.0);
 
-    float HdotX = dot(H, X), HdotY = dot(H, Y);
-    float LdotX = dot(L, X), LdotY = dot(L, Y);
-    float VdotX = dot(V, X), VdotY = dot(V, Y);
+    // Colors: UI stores sRGB; evaluate in linear.
+    vec3 base_color_lin = saturate3(mon2lin(base_color));
+    vec3 specular_color_lin = saturate3(mon2lin(specular_color));
+    vec3 coat_color_lin = saturate3(mon2lin(coat_color));
+    vec3 fuzz_color_lin = saturate3(mon2lin(fuzz_color));
 
-    vec3 base_color_lin     = mon2lin(base_color);
-    vec3 specular_color_lin = mon2lin(specular_color);
-    vec3 coat_color_lin     = mon2lin(coat_color);
-    vec3 fuzz_color_lin     = mon2lin(fuzz_color);
+    float M = saturate(base_metalness);
+    float C = saturate(coat_weight);
+    float Fz = saturate(fuzz_weight);
+    float xs = saturate(specular_weight);
+    vec3 base_col = base_weight * base_color_lin;
 
-    // ── Coat ─────────────────────────────────────────────────────────────────
-    float coat_f0   = iorToF0(coat_ior);
-    float coat_a    = max(sqr(coat_roughness), 0.0001);
-    float coat_Fr   = coat_f0 + (1.0 - coat_f0) * schlick5(LdotH);
-    vec3  coat_brdf = coat_weight * coat_color_lin * coat_Fr
-                    * ggxD(NdotH, HdotX, HdotY, coat_a, coat_a)
-                    * ggxV(NdotL, NdotV, LdotX, LdotY, VdotX, VdotY, coat_a, coat_a);
-    float coat_attn = 1.0 - coat_weight * coat_Fr;
+    // Effective dielectric IOR ratio seen by the specular interface (viewer eta_s):
+    // when coated, the spec/coat relative IOR (flipped to keep > 1).
+    float eta_sc = specular_ior / coat_ior;
+    if (eta_sc < 1.0) eta_sc = 1.0 / eta_sc;
+    float eta_s = mix(specular_ior, eta_sc, C);
 
-    // ── Specular roughness -> anisotropic GGX alphas ──────────────────────────
-    float aspect = sqrt(1.0 - specular_roughness_anisotropy * 0.9);
-    float ax = max(sqr(specular_roughness) / aspect, 0.0001);
-    float ay = max(sqr(specular_roughness) * aspect, 0.0001);
+    // ── Directional albedos (analytic stand-ins for the viewer's MC estimates) ──
+    float E_fuzz = (Fz > 0.0) ? zeltnerSheenDirAlbedo(NoV, clamp(fuzz_roughness, 0.01, 1.0)) : 0.0;
+    float coat_F0 = iorToF0(coat_ior);
+    float E_coat = (C > 0.0) ? ggxDirAlbedo(coat_roughness, NoV, coat_F0) : 0.0;
 
-    // ── F0: IOR-based dielectric or tinted metallic ───────────────────────────
-    float f0_dielectric = specular_weight * iorToF0(specular_ior);
-    vec3  F0 = mix(f0_dielectric * specular_color_lin,
-                   base_color_lin * specular_color_lin,
-                   base_metalness);
+    float spec_F0 = iorToF0(eta_s);
+    float spec_F0_mod = clamp(xs * spec_F0, 0.0, 1.0);
 
-    // ── Specular Fresnel (standard Schlick, or thin-film when weight > 0) ─────
-    // Thin-film sits between air and the substrate (specular_ior).
-    // For metallic surfaces the thin film is tinted by base_color (approximation).
-    vec3 std_F  = fresnelSchlick(LdotH, F0);
-    vec3 tf_raw = thinFilmFresnel(LdotH, 1.0, thin_film_ior, specular_ior, thin_film_thickness);
-    vec3 tf_F   = tf_raw * mix(specular_color_lin, base_color_lin * specular_color_lin, base_metalness);
-    vec3 spec_F = mix(std_F, tf_F, thin_film_weight);
+    // ── Lobe weights (openpbr_lobe_weights) ──
+    float w_fuzz = Fz;
+    float w_coated_base = mix(1.0, 1.0 - E_fuzz, Fz);
+    float w_coat = w_coated_base * C;
 
-    vec3 spec_brdf = spec_F
-                   * ggxD(NdotH, HdotX, HdotY, ax, ay)
-                   * ggxV(NdotL, NdotV, LdotX, LdotY, VdotX, VdotY, ax, ay);
+    vec3 w_base = vec3(w_coated_base);
+    if (C > 0.0) {
+        // Coat darkening (OpenPBR PR #253) + coat transmission tint
+        float EF = fresnelDielectricAvg(coat_ior);
+        float Kr = 1.0 - (1.0 - EF) / sqr(coat_ior);
+        float Ks = fresnelDielectric(NoV, coat_ior);
+        float rd = mix(1.0, specular_roughness, spec_F0_mod);
+        float rb = mix(rd, specular_roughness, M);
+        float K = mix(Ks, Kr, rb);
+        vec3 E_dielec = saturate3(base_col);                 // opaque dielectric base albedo
+        vec3 E_metal = saturate3(base_col * xs);             // metallic base albedo
+        vec3 E_base = mix(E_dielec, E_metal, M);
+        vec3 Delta = vec3(max(1.0 - K, 0.0)) / (vec3(1.0) - E_base * K * coat_color_lin);
+        vec3 base_darkening = mix(vec3(1.0), Delta, coat_darkening);
+        w_base = w_coated_base * mix(vec3(1.0), base_darkening * coat_color_lin * (1.0 - E_coat), C);
+    }
 
-    // ── EON diffuse (dielectric only; metals have no diffuse) ─────────────────
-    float avg_specF = dot(fresnelSchlick(LdotH, f0_dielectric * specular_color_lin),
-                          vec3(1.0 / 3.0));
-    vec3  diff_brdf = base_weight * (1.0 - base_metalness) * base_color_lin
-                    * eonDiffuse(NdotL, NdotV, LdotV, base_diffuse_roughness)
-                    * (1.0 - avg_specF);
+    vec3 w_metal = w_base * M;
+    vec3 w_dielectric = w_base * (1.0 - M);
 
-    // ── Fuzz / Sheen ──────────────────────────────────────────────────────────
-    vec3 fuzz_brdf = fuzz_weight * fuzz_color_lin
-                   * charlieD(NdotH, fuzz_roughness)
-                   * sheenV(NdotL, NdotV);
+    // ── Specular Fresnel factors (with optional thin film) ──
+    // Thin film exterior IOR (viewer: eta_fe = mix(tf/1, tf/coat_ior, C); n_ext = tf/eta_fe)
+    float tfw = saturate(thin_film_weight);
+    float tf_thick_nm = thin_film_thickness * 1000.0; // parameter is in micrometers
+    float eta_fe = mix(thin_film_ior, thin_film_ior / coat_ior, C);
+    float n_ext_film = thin_film_ior / max(eta_fe, DENOM_TOLERANCE);
 
-    // ── Layer composition: Coat -> (Fuzz + Thin-film Specular + Diffuse) ──────
-    return coat_brdf + coat_attn * (diff_brdf + spec_brdf + fuzz_brdf);
+    // Dielectric specular Fresnel (scalar without film; RGB with film)
+    float F_diel_nofilm = fresnelDielectricModulated(VoH, eta_s, xs);
+    vec3 F_diel = vec3(F_diel_nofilm);
+    if (tfw > 0.0) {
+        vec3 F_film = vec3(
+            thinFilmR(VoH, n_ext_film, thin_film_ior, vec2(specular_ior, 0.0), tf_thick_nm, 630.0),
+            thinFilmR(VoH, n_ext_film, thin_film_ior, vec2(specular_ior, 0.0), tf_thick_nm, 532.0),
+            thinFilmR(VoH, n_ext_film, thin_film_ior, vec2(specular_ior, 0.0), tf_thick_nm, 450.0));
+        F_diel = mix(F_diel, F_film, tfw);
+    }
+
+    // Conductor Fresnel: F82-tint, optionally mixed with thin film over conductor
+    vec3 F_metal = vec3(0.0);
+    if (M > 0.0) {
+        vec3 F_m = fresnelF82Tint(VoH, saturate3(base_col), specular_color_lin);
+        if (tfw > 0.0) {
+            vec3 cn;
+            vec3 ck;
+            gulbrandsenMapping(saturate3(base_col), specular_color_lin, cn, ck);
+            vec3 F_film = vec3(
+                thinFilmR(VoH, n_ext_film, thin_film_ior, vec2(cn.x, ck.x), tf_thick_nm, 630.0),
+                thinFilmR(VoH, n_ext_film, thin_film_ior, vec2(cn.y, ck.y), tf_thick_nm, 532.0),
+                thinFilmR(VoH, n_ext_film, thin_film_ior, vec2(cn.z, ck.z), tf_thick_nm, 450.0));
+            F_m = mix(F_m, F_film, tfw);
+        }
+        F_metal = min(vec3(1.0), xs * F_m);
+    }
+
+    // Diffuse throughput below the dielectric specular interface:
+    // 1 - E_spec(V), with F0 including the specular_weight modulation and thin film.
+    vec3 F0_eff = vec3(spec_F0_mod);
+    if (tfw > 0.0) {
+        vec3 tf_F0 = vec3(
+            thinFilmR(1.0, n_ext_film, thin_film_ior, vec2(specular_ior, 0.0), tf_thick_nm, 630.0),
+            thinFilmR(1.0, n_ext_film, thin_film_ior, vec2(specular_ior, 0.0), tf_thick_nm, 532.0),
+            thinFilmR(1.0, n_ext_film, thin_film_ior, vec2(specular_ior, 0.0), tf_thick_nm, 450.0));
+        F0_eff = mix(F0_eff, tf_F0, tfw);
+    }
+    vec3 E_spec = vec3(ggxDirAlbedo(specular_roughness, NoV, F0_eff.x),
+                       ggxDirAlbedo(specular_roughness, NoV, F0_eff.y),
+                       ggxDirAlbedo(specular_roughness, NoV, F0_eff.z));
+
+    // Specular lobe weight: tint only (specular_weight applied once, via modulated F0)
+    vec3 w_spec = specular_color_lin * w_dielectric;
+    vec3 w_diff = w_dielectric * base_col * (vec3(1.0) - E_spec);
+
+    // ── Lobe evaluations ──
+
+    // Base specular GGX (shared NDF between dielectric and metal)
+    float ax;
+    float ay;
+    ndfAlphas(specular_roughness, specular_roughness_anisotropy, ax, ay);
+    float D = ggxNDF(HL, ax, ay);
+    float G2 = ggxG2(VL, LL, ax, ay);
+    float mf = D * G2 / max(4.0 * NoL * NoV, DENOM_TOLERANCE);
+
+    vec3 f_spec = F_diel * mf;
+    vec3 f_metal = F_metal * mf;
+
+    // Coat GGX (isotropic; exact dielectric Fresnel at coat_ior, untinted)
+    vec3 f_coat = vec3(0.0);
+    if (C > 0.0) {
+        float cax;
+        float cay;
+        ndfAlphas(coat_roughness, 0.0, cax, cay);
+        float Dc = ggxNDF(HL, cax, cay);
+        float G2c = ggxG2(VL, LL, cax, cay);
+        float Fc = fresnelDielectric(VoH, coat_ior);
+        f_coat = vec3(Fc * Dc * G2c / max(4.0 * NoL * NoV, DENOM_TOLERANCE));
+    }
+
+    // EON diffuse (white; color in the lobe weight)
+    vec3 f_diff = vec3(f_EON_white(base_diffuse_roughness, NoV, NoL, cosLV));
+
+    // Zeltner sheen fuzz
+    vec3 f_fuzz = vec3(0.0);
+    if (Fz > 0.0) {
+        f_fuzz = fuzz_color_lin * fuzzEval(VL, LL, fuzz_roughness);
+    }
+
+    // ── Composite (openpbr_bsdf_evaluate_lobes) ──
+    return w_fuzz * f_fuzz
+         + w_coat * f_coat
+         + w_metal * f_metal
+         + w_spec * f_spec
+         + w_diff * f_diff;
 }
 
 ::end shader
