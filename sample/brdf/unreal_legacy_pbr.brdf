@@ -12,6 +12,7 @@ float metallic 0.0 1.0 0.0
 float specular 0.0 1.0 0.5
 float roughness 0.0 1.0 0.3
 float anisotropy -0.99 0.99 0.0
+bool rough_diffuse 0
 ::end parameters
 
 ::begin shader
@@ -59,6 +60,28 @@ vec3 computeDiffuseAlbedo(vec3 baseColor, float metallicValue) {
 
 vec3 diffuseLambert(vec3 diffuseColor) {
     return diffuseColor * (1.0 / PI);
+}
+
+// UE BRDF.ush Diffuse_EON [Portsmouth et al. 2025], used by Diffuse_GGX_Rough v3.
+vec3 diffuseEON(vec3 diffuseColor, float rough, float NoV, float NoL, float VoL) {
+    vec3 rho = diffuseColor * (vec3(1.0) + (vec3(0.189468) - 0.189468 * diffuseColor) * rough);
+    float s = VoL - NoV * NoL;
+    float sOverT = max(s / max(0.000001, max(NoV, NoL)), s);
+    const float constant1FON = 0.5 - 2.0 / (3.0 * PI);
+    float AF = 1.0 - rough * (1.0 - 1.0 / (1.0 + constant1FON));
+    float fSS = AF * (1.0 + rough * sOverT);
+    const float g1 = 0.262048;
+    float gOverPiV = g1 - g1 * NoV;
+    float fMS = 1.0 - AF * (1.0 + rough * gOverPiV);
+    return rho * (fSS + rho * fMS) * (1.0 / PI);
+}
+
+// UE BRDF.ush Diffuse_GGX_Rough (ROUGH_DIFFUSE_BRDF_VERSION 3): Diffuse_EON with
+// roughness*0.4 and VoL from the half-angle double-angle identity. Selected in UE
+// when MATERIAL_ROUGHDIFFUSE (r.Material.RoughDiffuse project setting) is enabled.
+vec3 diffuseGGXRough(vec3 diffuseColor, float rough, float NoV, float NoL, float VoH) {
+    float VoL = 2.0 * VoH * VoH - 1.0;
+    return diffuseEON(diffuseColor, rough * 0.4, NoV, NoL, VoL);
 }
 
 float dGGX(float a2, float NoH) {
@@ -133,7 +156,12 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
     vec3 diffuseColor = computeDiffuseAlbedo(baseColor, m);
     vec3 specularColor = computeF0(s, baseColor, m);
 
-    vec3 diffuse = diffuseLambert(diffuseColor);
+    // UE default diffuse is Lambert; the rough (EON/Chan) model is gated behind the
+    // "Enable Rough Diffuse Material" project setting (r.Material.RoughDiffuse), OFF by
+    // default. rough_diffuse=1 reproduces that setting enabled.
+    vec3 diffuse = rough_diffuse
+        ? diffuseGGXRough(diffuseColor, r, NoV, NoL, VoH)
+        : diffuseLambert(diffuseColor);
 
     vec3 F = fresnelSchlickUE(specularColor, VoH);
     vec3 specular;
