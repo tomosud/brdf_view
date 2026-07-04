@@ -1,0 +1,58 @@
+analytic
+
+# Unreal Engine BRDF.ush Diffuse_GGX_Rough fallback branch.
+# Chan 2018 / Call of Duty: WWII style rough diffuse with retro-reflection.
+
+::begin parameters
+color diffuse_color 1.0 1.0 1.0
+float roughness 0.0 1.0 0.5
+float retro_reflectivity_weight 0.0 1.0 1.0
+::end parameters
+
+::begin shader
+
+const float PI = 3.14159265358979323846;
+
+float saturate(float x) { return clamp(x, 0.0, 1.0); }
+vec3 saturate(vec3 x) { return clamp(x, vec3(0.0), vec3(1.0)); }
+float pow4(float x) { float x2 = x * x; return x2 * x2; }
+float pow5(float x) { float x2 = x * x; return x2 * x2 * x; }
+
+vec3 mon2lin(vec3 x) {
+    return vec3(pow(x[0], 2.2), pow(x[1], 2.2), pow(x[2], 2.2));
+}
+
+vec3 diffuseChan2018(vec3 diffuseColor, float rough, float NoV, float NoL, float VoH, float NoH, float retroWeight)
+{
+    float a2 = max(pow4(rough), 0.00000001);
+    float g = saturate((1.0 / 18.0) * log2(2.0 / a2 - 1.0));
+
+    float F0 = VoH + pow5(1.0 - VoH);
+    float FdV = 1.0 - 0.75 * pow5(1.0 - NoV);
+    float FdL = 1.0 - 0.75 * pow5(1.0 - NoL);
+
+    float Fd = mix(F0, FdV * FdL, saturate(2.2 * g - 0.5));
+
+    float Fb = ((34.5 * g - 59.0) * g + 24.5) * VoH
+             * exp2(-max(73.2 * g - 21.2, 8.9) * sqrt(max(NoH, 0.0)));
+    Fb *= retroWeight;
+
+    float lobe = min(1.0, (Fd + Fb) * (1.0 / PI));
+    return diffuseColor * lobe;
+}
+
+vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y)
+{
+    float NoL = saturate(dot(N, L));
+    float NoV = saturate(dot(N, V));
+    if (NoL <= 0.0 || NoV <= 0.0) return vec3(0.0);
+
+    vec3 H = normalize(L + V);
+    float NoH = saturate(dot(N, H));
+    float VoH = saturate(dot(V, H));
+    float r = saturate(roughness);
+    float retroWeight = saturate(retro_reflectivity_weight);
+    return diffuseChan2018(saturate(mon2lin(diffuse_color)), r, NoV, NoL, VoH, NoH, retroWeight);
+}
+
+::end shader

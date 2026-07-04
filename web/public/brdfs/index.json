@@ -39,6 +39,9 @@
   "showVectors.brdf",
   "stretchedphong.brdf",
   "substrate.brdf",
+  "ue_chan2018_diffuse.brdf",
+  "ue_chan2024_diffuse.brdf",
+  "ue_eon_diffuse.brdf",
   "unreal_legacy_pbr.brdf",
   "walter.brdf",
   "ward.brdf"

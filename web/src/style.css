@@ -224,6 +224,43 @@ html, body {
 .brdf-visible-toggle input {
   flex: none;
 }
+.brdf-source-icon {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 16px;
+  padding: 0;
+  border: 2px solid #8dbdff;
+  border-radius: 2px;
+  background: #262626;
+  cursor: pointer;
+}
+.brdf-source-icon:hover {
+  border-color: #b8d5ff;
+  background: #303846;
+}
+.brdf-source-icon:focus-visible {
+  outline: 2px solid #b8d5ff;
+  outline-offset: 2px;
+}
+.brdf-source-icon:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.brdf-source-icon::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 6px;
+  height: 6px;
+  background:
+    linear-gradient(225deg, #262626 0 48%, #8dbdff 50% 100%);
+}
+.brdf-source-icon:hover::after {
+  background:
+    linear-gradient(225deg, #303846 0 48%, #b8d5ff 50% 100%);
+}
 .btn-close {
   padding: 2px 6px;
   font-size: 11px;
@@ -531,6 +568,83 @@ html, body {
 .image-slice-sample-marker::after {
   width: 15px;
   height: 3px;
+}
+
+.source-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1002;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgb(0 0 0 / 64%);
+}
+.source-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1100px, 96vw);
+  height: min(780px, 92vh);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #202020;
+  border: 1px solid #5c5c5c;
+  border-radius: 6px;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 58%);
+}
+.source-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  background: #2c2c2c;
+  border-bottom: 1px solid #4c4c4c;
+}
+.source-modal-title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-modal-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.source-action {
+  min-width: 54px;
+}
+.source-editor {
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 0;
+  background: #171717;
+  color: #d8d8d8;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  tab-size: 4;
+}
+.source-line {
+  display: grid;
+  grid-template-columns: 56px max-content;
+  min-height: 17px;
+}
+.source-line:hover {
+  background: rgb(141 189 255 / 8%);
+}
+.source-line-number {
+  padding: 0 10px 0 8px;
+  color: #777;
+  text-align: right;
+  user-select: none;
+  border-right: 1px solid #333;
+}
+.source-line-code {
+  padding: 0 14px;
+  white-space: pre;
 }
 
 #shader-log {
