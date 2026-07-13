@@ -35,7 +35,7 @@ export interface MeasuredData {
 
 /** A parsed .brdf file: parameter declarations + raw GLSL fragments (preserved verbatim). */
 export interface BrdfDef {
-  /** Display name, derived from the file name (without extension). */
+  /** User-facing display name, normally derived from the file name. */
   name: string;
   params: ParamDef[];
   /** Tracks where this BRDF came from so IndexedDB can restore it on reload. */

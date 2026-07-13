@@ -1,6 +1,8 @@
 analytic
 
-# Unreal Engine 5 Substrate Slab BSDF - opaque direct-lighting approximation.
+# CUSTOM IMPLEMENTATION (独自実装).
+# Unreal Engine 5 Substrate Slab BSDF - project-specific opaque direct-lighting approximation.
+# This is not an original or complete Unreal Engine Substrate implementation.
 #
 # This file mirrors the UE Substrate Slab evaluation as far as a single
 # pixel-local BRDF(L,V,N,X,Y) can: GGX + generalized Schlick, UE's joint Smith
@@ -21,7 +23,7 @@ float roughness 0.0 1.0 0.3
 float anisotropy -1.0 1.0 0.0
 float second_roughness 0.0 1.0 0.85
 float second_roughness_weight 0.0 1.0 0.0
-bool second_roughness_as_clearcoat 0
+bool second_roughness_as_clearcoat_custom 0
 float fuzz_amount 0.0 1.0 0.0
 color fuzz_color 1.0 1.0 1.0
 float fuzz_roughness 0.0 1.0 0.7
@@ -213,7 +215,7 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
     if (second_roughness_weight > 0.0) {
         vec3 hazeF0 = F0;
         vec3 hazeF90 = F90;
-        if (second_roughness_as_clearcoat) {
+        if (second_roughness_as_clearcoat_custom) {
             hazeF0 = vec3(0.04);
             hazeF90 = vec3(1.0);
         }
@@ -221,11 +223,11 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
         vec3 preserveHaze;
         vec3 specHaze = specularGGX(hazeF0, hazeF90, second_roughness, NoH, VoH, NoV, NoL,
                                     XoH, YoH, XoV, XoL, YoV, YoL,
-                                    second_roughness_as_clearcoat ? 0.0 : anisotropy,
+                                    second_roughness_as_clearcoat_custom ? 0.0 : anisotropy,
                                     preserveHaze);
 
         float w = saturate(second_roughness_weight);
-        if (second_roughness_as_clearcoat) {
+        if (second_roughness_as_clearcoat_custom) {
             float topF = luminance(fresnelSchlick(VoH, hazeF0, hazeF90));
             vec3 topThroughput = mix(vec3(1.0), vec3(saturate(1.0 - topF)), w);
             specular = spec0 * topThroughput + specHaze * w;

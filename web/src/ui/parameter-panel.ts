@@ -5,6 +5,7 @@
 import { floatControl, boolControl, colorControl, selectControl } from './controls.js';
 import type { Channel, Store } from '../state/store.js';
 import type { BrdfDef } from '../brdf/types.js';
+import { splitCustomImplementationName } from '../brdf/loader.js';
 
 export function mountParameterPanel(root: HTMLElement, store: Store): void {
   const render = () => {
@@ -81,7 +82,19 @@ function brdfSection(store: Store, id: string): HTMLElement {
     visibleLabel.append(visible);
   }
   const title = document.createElement('span');
-  title.textContent = inst.def.name;
+  title.className = 'brdf-title';
+  const customTitle = splitCustomImplementationName(inst.def.name);
+  if (customTitle) {
+    const name = document.createElement('span');
+    name.className = 'brdf-title-name';
+    name.textContent = customTitle.name;
+    const badge = document.createElement('span');
+    badge.className = 'brdf-title-badge';
+    badge.textContent = customTitle.badge;
+    title.append(name, badge);
+  } else {
+    title.textContent = inst.def.name;
+  }
   visibleLabel.append(title);
 
   const btnGroup = document.createElement('div');
@@ -114,7 +127,9 @@ function brdfSection(store: Store, id: string): HTMLElement {
       );
     } else if (p.kind === 'bool') {
       s.append(
-        boolControl(p.name, Boolean(inst.values.get(p.name)), (v) => store.setParam(id, p.name, v)),
+        boolControl(parameterDisplayName(p.name), Boolean(inst.values.get(p.name)), (v) =>
+          store.setParam(id, p.name, v),
+        ),
       );
     } else {
       s.append(
@@ -125,6 +140,13 @@ function brdfSection(store: Store, id: string): HTMLElement {
     }
   }
   return s;
+}
+
+function parameterDisplayName(name: string): string {
+  if (name === 'second_roughness_as_clearcoat_custom') {
+    return 'second_roughness_as_clearcoat（custom）';
+  }
+  return name;
 }
 
 function isShaderBrdf(def: BrdfDef): boolean {

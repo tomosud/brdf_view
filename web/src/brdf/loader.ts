@@ -5,6 +5,27 @@ import type { BrdfInstance, ParamValue } from './types.js';
 
 let counter = 0;
 
+export const CUSTOM_IMPLEMENTATION_BADGE = '[custom implementation / 独自実装]';
+
+const CUSTOM_IMPLEMENTATION_LABELS: Readonly<Record<string, string>> = {
+  'disney.brdf': `disney ${CUSTOM_IMPLEMENTATION_BADGE}`,
+  'openpbr.brdf': `openpbr ${CUSTOM_IMPLEMENTATION_BADGE}`,
+  'unreal_legacy_pbr.brdf': `unreal_legacy_pbr ${CUSTOM_IMPLEMENTATION_BADGE}`,
+  'substrate.brdf': `substrate ${CUSTOM_IMPLEMENTATION_BADGE}`,
+};
+
+/** User-facing name for bundled samples that distinguishes project-specific implementations. */
+export function bundledBrdfDisplayName(fileName: string): string {
+  return CUSTOM_IMPLEMENTATION_LABELS[fileName.toLowerCase()] ?? fileName.replace(/\.brdf$/i, '');
+}
+
+/** Splits a custom implementation display name so the UI can render its badge on a second line. */
+export function splitCustomImplementationName(displayName: string): { name: string; badge: string } | null {
+  const suffix = ` ${CUSTOM_IMPLEMENTATION_BADGE}`;
+  if (!displayName.endsWith(suffix)) return null;
+  return { name: displayName.slice(0, -suffix.length), badge: CUSTOM_IMPLEMENTATION_BADGE };
+}
+
 export function instanceFromDef(def: ReturnType<typeof parseBrdf>): BrdfInstance {
   const values = new Map<string, ParamValue>();
   for (const p of def.params) {
@@ -20,7 +41,7 @@ export async function loadBundledBrdf(fileName: string): Promise<BrdfInstance> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`failed to load ${fileName}: ${res.status}`);
   const text = await res.text();
-  const name = fileName.replace(/\.brdf$/i, '');
+  const name = bundledBrdfDisplayName(fileName);
   const def = parseBrdf(name, text);
   def.origin = { kind: 'bundled', filename: fileName };
   return instanceFromDef(def);

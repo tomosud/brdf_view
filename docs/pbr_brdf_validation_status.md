@@ -100,8 +100,8 @@ GBuffer、マテリアルグラフ、パストレーシング、非ローカル�
 
 ## `sample/brdf/openpbr.brdf`
 
-位置づけ: OpenPBR風の不透明反射モデル。
-完全なOpenPBR実装ではない。
+位置づけ: **独自実装**によるOpenPBR風の不透明反射モデル。
+元の参照実装そのものではなく、完全なOpenPBR実装でもない。
 
 ### パラメータ
 
@@ -159,7 +159,7 @@ GBuffer、マテリアルグラフ、パストレーシング、非ローカル�
 | `anisotropy` | `-1..1` / `0` | 主GGXの異方性。 |
 | `second_roughness` | `0..1` / `.85` | 2つ目のスペキュラlobeの粗さ。 |
 | `second_roughness_weight` | `0..1` / `0` | 主lobeと2つ目のlobeの混合量。 |
-| `second_roughness_as_clearcoat` | bool / `0` | 2つ目のlobeを簡易clearcoatとして扱う。 |
+| `second_roughness_as_clearcoat_custom`（画面表示: `second_roughness_as_clearcoat（custom）`） | bool / `0` | **独自拡張**。2つ目のlobeを簡易clearcoatとして扱う。元のSubstrate実装に同名・同等の切り替えはない。 |
 | `fuzz_amount` | `0..1` / `0` | fuzz lobeの重み。下層も減衰する。 |
 | `fuzz_color` | color / `1 1 1` | fuzz FresnelのF0。 |
 | `fuzz_roughness` | `0..1` / `.7` | fuzz粗さ。最小値 `0.02` に丸める。 |
@@ -175,7 +175,7 @@ GBuffer、マテリアルグラフ、パストレーシング、非ローカル�
 | energy preservation | LUTまたは解析近似の経路がある。 | 中 | 解析近似のみ。LUTは使わない。 | 代替 |
 | diffuse | Substrateの通常direct lightingではrough diffuse有効。手元UE sourceは `Diffuse_GGX_Rough` v3、つまりEON。 | 高 | `rough_diffuse` は固定 `true`。EONを `roughness * 0.4` で使う。 | そのまま |
 | second roughness | Haziness / second roughness系の追加lobe。 | 中 | 2つ目のGGX lobeとして混合。 | 代替 |
-| clearcoat-like second lobe | clearcoat的な上層扱いがある。 | 低 | F0=0.04、F90=1.0の簡易上層として合成。 | 代替 |
+| clearcoat-like second lobe | `second_roughness_as_clearcoat_custom` に相当する切り替えは元実装にない。 | 低 | F0=0.04、F90=1.0の簡易上層として合成する独自拡張。 | 独自 |
 | fuzz | fuzz/sheen系処理。 | 低 | Charlie NDF + Ashikhmin visibility、下層を簡易減衰。 | 代替 |
 | graph topology / closure packing | Substrateの中核。 | 高 | 単一関数では扱えない。 | 省略 |
 | MFP / SSS / thin surface / transmission / rough refraction | 非ローカルまたは別経路が必要。 | 高 | 実装なし。 | 省略 |
@@ -185,7 +185,7 @@ GBuffer、マテリアルグラフ、パストレーシング、非ローカル�
 
 | ファイル | 扱い |
 |---|---|
-| `disney.brdf` | Disney principled BRDF風の独自サンプル。 |
-| `unreal_legacy_pbr.brdf` | Default Litの比較用。主要なローカルBRDF項は実装。 |
-| `openpbr.brdf` | OpenPBR風の不透明近似。推定・代替が多い。 |
-| `substrate.brdf` | Substrate Slabのローカル近似。renderer依存部分は省略。 |
+| `disney.brdf` | **独自実装**。Disney principled BRDF風のサンプル。 |
+| `unreal_legacy_pbr.brdf` | **独自実装**。Default Litの比較用。主要なローカルBRDF項は実装。 |
+| `openpbr.brdf` | **独自実装**。OpenPBR風の不透明近似。推定・代替が多い。 |
+| `substrate.brdf` | **独自実装**。Substrate Slabのローカル近似。renderer依存部分は省略。 |

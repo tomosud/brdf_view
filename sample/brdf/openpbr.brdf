@@ -1,6 +1,10 @@
 analytic
 
-# OpenPBR Surface - opaque subset, rebuilt against the reference implementations:
+# CUSTOM IMPLEMENTATION (独自実装).
+# OpenPBR Surface - project-specific opaque subset rebuilt against reference implementations.
+# This is not an original or complete OpenPBR reference implementation.
+#
+# References used by this implementation:
 #   - OpenPBR-viewer (Portsmouth), glsl/pathtracing/*.glsl  [layer structure, lobe math]
 #   - openpbr-bsdf (Adobe, OpenPBR 1.1), impl/*.h           [specular_weight semantics]
 #

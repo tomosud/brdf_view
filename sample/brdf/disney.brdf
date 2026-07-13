@@ -1,5 +1,10 @@
 analytic
 
+# CUSTOM IMPLEMENTATION (独自実装).
+# This project sample is not the original Disney BRDF Explorer implementation.
+# It is distributed with the original license notice below and must not be
+# presented as an official or reference Disney implementation.
+#
 # Copyright Disney Enterprises, Inc.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

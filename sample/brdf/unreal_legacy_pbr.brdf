@@ -1,6 +1,8 @@
 analytic
 
-# Unreal Engine legacy Default Lit PBR - local BRDF approximation.
+# CUSTOM IMPLEMENTATION (独自実装).
+# Unreal Engine legacy Default Lit PBR - project-specific local BRDF approximation.
+# This is not an original or complete Unreal Engine renderer implementation.
 #
 # This .brdf returns the local BRDF value only. It omits Unreal light falloff,
 # NoL multiplication, shadows, rect/area-light LTC, clear coat, SSS, cloth, eye,

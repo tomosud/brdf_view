@@ -217,9 +217,23 @@ html, body {
   color: var(--muted);
   cursor: pointer;
 }
-.brdf-visible-toggle span {
+.brdf-visible-toggle > .brdf-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.15;
+}
+.brdf-title-name,
+.brdf-title-badge {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.brdf-title-badge {
+  color: #d6b56b;
+  font-size: 10px;
+  font-weight: 600;
 }
 .brdf-visible-toggle input {
   flex: none;

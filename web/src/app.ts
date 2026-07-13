@@ -4,7 +4,7 @@
 import './style.css';
 import { detectFeatures } from './gl/renderer.js';
 import { Store } from './state/store.js';
-import { loadBundledBrdf } from './brdf/loader.js';
+import { bundledBrdfDisplayName, loadBundledBrdf } from './brdf/loader.js';
 import { loadBrdfFile } from './io/file-open.js';
 import { mountParameterPanel } from './ui/parameter-panel.js';
 import { Plot3DView } from './views/plot-3d.js';
@@ -198,7 +198,7 @@ async function wireSampleBrdfs(store: Store): Promise<void> {
       ...names.map((name) => {
         const opt = document.createElement('option');
         opt.value = name;
-        opt.textContent = name.replace(/\.brdf$/i, '');
+        opt.textContent = bundledBrdfDisplayName(name);
         return opt;
       }),
     );

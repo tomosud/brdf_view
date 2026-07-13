@@ -56,12 +56,16 @@ https://rgl.epfl.ch/materials
 
 | ファイル | 概要 |
 |---|---|
-| `sample/brdf/disney.brdf` | Disney principled BRDF風の独自サンプル。元ビューア実装そのものではありません。 |
-| `sample/brdf/unreal_legacy_pbr.brdf` | Unreal legacy Default Lit のローカルBRDF近似。 |
-| `sample/brdf/openpbr.brdf` | OpenPBR風の不透明反射近似。推定・代替が多いです。 |
-| `sample/brdf/substrate.brdf` | Unreal Substrate Slab のローカルdirect lighting近似。 |
+| `sample/brdf/disney.brdf` | **独自実装**。Disney principled BRDF風のサンプルで、元ビューア実装そのものではありません。 |
+| `sample/brdf/unreal_legacy_pbr.brdf` | **独自実装**。Unreal legacy Default Lit のローカルBRDF近似です。 |
+| `sample/brdf/openpbr.brdf` | **独自実装**。OpenPBR風の不透明反射近似で、元の参照実装そのものではありません。 |
+| `sample/brdf/substrate.brdf` | **独自実装**。Unreal Substrate Slab のローカルdirect lighting近似です。画面上の `second_roughness_as_clearcoat（custom）` は元実装にない独自拡張です。 |
 
-各項目が「そのまま実装」「代替」「省略」のどれかは
+アプリ内では `disney`、`unreal_legacy_pbr`、`openpbr`、`substrate` の名前にも
+`[custom implementation / 独自実装]` を付けて表示します。
+読み込み後のBRDF見出しでは、名前とこの表記を2行に分けて表示します。
+
+各項目が「そのまま実装」「代替」「省略」「独自」のどれかは
 [PBR BRDF validation status](docs/pbr_brdf_validation_status.md) にまとめています。
 
 ## RGL-EPFL `.bsdf` の実装について
