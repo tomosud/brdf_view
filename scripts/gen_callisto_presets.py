@@ -71,22 +71,24 @@ def main() -> None:
     src = open(BASE, "rb").read().decode("utf-8").replace("\r\n", "\n")
     head, rest = src.split("::begin parameters\n", 1)
     params, tail = rest.split("::end parameters\n", 1)
-    names = {line.split()[1] for line in params.splitlines() if line.strip()}
+    names = {line.split("#")[0].split()[1] for line in params.splitlines() if line.split("#")[0].strip()}
     for name, (desc, profile, values) in PRESETS.items():
         unknown = set(values) - names
         if unknown:
             raise SystemExit(f"{name}: unknown parameters {sorted(unknown)}")
         out_params = []
         for line in params.splitlines():
-            t = line.split()
+            decl, sep, comment = line.partition("#")
+            t = decl.split()
             if not t or t[1] not in values:
                 out_params.append(line)
                 continue
             v = values[t[1]]
+            tail_comment = f"  # {comment.strip()}" if sep else ""
             if t[0] == "color":
-                out_params.append(f"color {t[1]} " + " ".join(fmt(x) for x in v))
+                out_params.append(f"color {t[1]} " + " ".join(fmt(x) for x in v) + tail_comment)
             else:
-                out_params.append(f"float {t[1]} {t[2]} {t[3]} {fmt(v)}")
+                out_params.append(f"float {t[1]} {t[2]} {t[3]} {fmt(v)}" + tail_comment)
         header = (
             "analytic\n\n"
             f"# DERIVED PRESET of callisto_brdf.brdf - {desc} ({profile}).\n"

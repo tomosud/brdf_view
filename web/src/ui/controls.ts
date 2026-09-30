@@ -96,6 +96,7 @@ export function colorControl(
   label: string,
   value: Rgb,
   onChange: (v: Rgb) => void,
+  description?: string,
 ): HTMLElement {
   const committed: Rgb = clampRgb(value);
   let draft: Rgb = [...committed];
@@ -105,7 +106,8 @@ export function colorControl(
   const labelEl = document.createElement('span');
   labelEl.className = 'ctl-label';
   labelEl.textContent = label;
-  labelEl.title = label;
+  labelEl.title = description ?? label;
+  if (description) row.title = description;
 
   const wrap = document.createElement('div');
   wrap.className = 'ctl-color';

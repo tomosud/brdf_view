@@ -2,6 +2,7 @@
   "ashikhman_shirley.brdf",
   "blinn.brdf",
   "blinnphong.brdf",
+  "brdf_slice_guide.brdf",
   "callisto_brdf.brdf",
   "callisto_cloth_prisoner.brdf",
   "callisto_eye.brdf",

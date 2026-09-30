@@ -1,0 +1,105 @@
+analytic
+
+# CUSTOM DIAGNOSTIC (独自実装) - NOT A PHYSICAL BRDF.
+# Colour-coded guide to the regions of the Image Slice view (Burley 2012 layout):
+#   x = thetaH (angle between N and H): 0 = left edge, 90 = right edge
+#   y = thetaD (angle between L and H): 0 = bottom (L = V), 90 = top (L, V far apart)
+# Each colour is a 0..1 mask of one angular region where common BRDF features live.
+# Each region has a show_* checkbox and a *_color swatch (the swatch IS the legend;
+# press Defaults to restore the colours below). The floats set region sizes.
+# Turn off the viewer's N.L multiply to see the raw masks. Change phiD to see how
+# the horizon (N.L / N.V -> 0) moves.
+#
+#   white    spec_peak_left        : thetaH ~ 0         left column - mirror direction, GGX/Blinn peak
+#   magenta  fresnel_top_left      : thetaD -> 90, thetaH small   top-left - grazing Fresnel (specular
+#                            and "diffuse Fresnel" / sheen brighten here)
+#   red      retro_bottom_right    : thetaD -> 0, thetaH large    bottom-right - retroreflection
+#                            (L ~ V at grazing: rough diffuse, dust, cloth)
+#   yellow   backscatter_bottom    : thetaD ~ 0         bottom row - light comes from the camera
+#   blue     light_grazing_NdotL   : N.L -> 0           light near the horizon (terminator, shadow edge)
+#   cyan     view_grazing_NdotV    : N.V -> 0           view near the horizon (silhouette / rim)
+#   dark red below_horizon         : N.L <= 0 or N.V <= 0 - a real BRDF is 0 (black) here
+#   gray     base_diffuse          : constant floor so the empty middle (plain diffuse) is visible
+
+::begin parameters
+bool show_spec_peak_left 1  # 左端（θh≈0）: 鏡面反射方向のスペキュラのピーク / left edge (thetaH~0): specular peak in the mirror direction
+color spec_peak_left_color 1.0 1.0 1.0  # スペキュラのピーク領域の色（凡例） / legend colour of the specular peak region
+bool show_fresnel_top_left 1  # 左上（θd→90°）: グレージングのフレネル。スペキュラ・拡散フレネル・シーンが明るくなる / top-left (thetaD->90): grazing Fresnel; specular, diffuse Fresnel and sheen brighten
+color fresnel_top_left_color 1.0 0.2 1.0  # フレネル領域の色（凡例） / legend colour of the Fresnel region
+bool show_retro_bottom_right 1  # 右下（θd≈0, θh大）: 再帰反射。粗い拡散・ほこり・布 / bottom-right (thetaD~0, large thetaH): retroreflection; rough diffuse, dust, cloth
+color retro_bottom_right_color 1.0 0.2 0.15  # 再帰反射領域の色（凡例） / legend colour of the retroreflection region
+bool show_backscatter_bottom 1  # 下端（θd≈0）: 光がカメラと同じ方向から来る（L≒V） / bottom edge (thetaD~0): light comes from the camera direction (L~V)
+color backscatter_bottom_color 1.0 0.85 0.1  # L≒V 領域の色（凡例） / legend colour of the L~V region
+bool show_light_grazing_NdotL 1  # 光が地平線付近（N·L→0）: 明暗境界・影の縁 / light near the horizon (N.L->0): terminator, shadow edge
+color light_grazing_NdotL_color 0.2 0.45 1.0  # N·L→0 領域の色（凡例） / legend colour of the N.L->0 region
+bool show_view_grazing_NdotV 1  # 視線が地平線付近（N·V→0）: 輪郭・リム / view near the horizon (N.V->0): silhouette, rim
+color view_grazing_NdotV_color 0.1 1.0 1.0  # N·V→0 領域の色（凡例） / legend colour of the N.V->0 region
+bool show_below_horizon 1  # L か V が面の裏（N·L≤0 / N·V≤0）: 本来の BRDF は 0 / L or V below the surface: a real BRDF is 0 here
+color below_horizon_color 0.5 0.0 0.0  # 地平線より下の領域の色（凡例） / legend colour of the below-horizon region
+bool show_base_diffuse 1  # どの領域にも入らない中央（普通の拡散のみ）を薄く表示 / faintly show the plain-diffuse middle
+color base_diffuse_color 0.25 0.25 0.25  # 中央の下地の色 / colour of the plain-diffuse floor
+float spec_peak_width_deg 1.0 45.0 10.0  # スペキュラのピーク領域の幅（θh, 度） / width of the specular peak region (thetaH, degrees)
+float fresnel_exponent 0.5 10.0 5.0  # フレネル領域の鋭さ (1-cosθd)^n / sharpness of the Fresnel region (1-cos thetaD)^n
+float retro_exponent 0.5 10.0 2.0  # 再帰反射領域の鋭さ (1-cosθh)^n / sharpness of the retroreflection region (1-cos thetaH)^n
+float backscatter_width_deg 1.0 45.0 10.0  # L≒V 領域の幅（θd, 度） / width of the L~V region (thetaD, degrees)
+float grazing_width_NdotL 0.01 1.0 0.2  # N·L→0 領域の幅（N·L） / width of the N.L->0 band
+float grazing_width_NdotV 0.01 1.0 0.2  # N·V→0 領域の幅（N·V） / width of the N.V->0 band
+::end parameters
+
+::begin shader
+
+const float PI = 3.14159265358979323846;
+
+float saturate(float x) { return clamp(x, 0.0, 1.0); }
+
+// Colour parameters are sRGB swatches; convert so the view shows the swatch colour.
+vec3 mon2lin(vec3 x) {
+    vec3 c = clamp(x, vec3(0.0), vec3(1.0));
+    vec3 lo = c / 12.92;
+    vec3 hi = pow((c + vec3(0.055)) / 1.055, vec3(2.4));
+    return mix(hi, lo, vec3(lessThanEqual(c, vec3(0.04045))));
+}
+
+// 1 inside the band [0, w], smooth fall-off to 0 at w.
+float band(float x, float w) {
+    float t = saturate(x / max(w, 0.00001));
+    return 1.0 - t * t * (3.0 - 2.0 * t);
+}
+
+void addZone(bool on, float mask, vec3 color, inout vec3 acc, inout float wsum, inout float wmax) {
+    if (!on) return;
+    float m = saturate(mask);
+    acc += m * color;
+    wsum += m;
+    wmax = max(wmax, m);
+}
+
+vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
+    float NoL = dot(N, L);
+    float NoV = dot(N, V);
+    if (NoL <= 0.0 || NoV <= 0.0) {
+        return show_below_horizon ? mon2lin(below_horizon_color) : vec3(0.0);
+    }
+
+    vec3 H = normalize(L + V);
+    float cosH = saturate(dot(N, H));             // cos(thetaH)
+    float cosD = saturate(dot(L, H));             // cos(thetaD)
+    float thetaH = degrees(acos(cosH));
+    float thetaD = degrees(acos(cosD));
+
+    vec3 acc = vec3(0.0);
+    float wsum = 0.0;
+    float wmax = 0.0;
+    addZone(show_spec_peak_left,      band(thetaH, spec_peak_width_deg),                              mon2lin(spec_peak_left_color), acc, wsum, wmax);
+    addZone(show_fresnel_top_left,  pow(1.0 - cosD, fresnel_exponent) * cosH,                       mon2lin(fresnel_top_left_color), acc, wsum, wmax);
+    addZone(show_retro_bottom_right,    pow(1.0 - cosH, retro_exponent) * pow(cosD, 4.0) * 2.0,        mon2lin(retro_bottom_right_color), acc, wsum, wmax);
+    addZone(show_backscatter_bottom, band(thetaD, backscatter_width_deg),                            mon2lin(backscatter_bottom_color), acc, wsum, wmax);
+    addZone(show_light_grazing_NdotL,  band(NoL, grazing_width_NdotL),                                 mon2lin(light_grazing_NdotL_color), acc, wsum, wmax);
+    addZone(show_view_grazing_NdotV,   band(NoV, grazing_width_NdotV),                                 mon2lin(view_grazing_NdotV_color), acc, wsum, wmax);
+
+    vec3 color = wsum > 0.0 ? acc / wsum * wmax : vec3(0.0);
+    if (show_base_diffuse) color = max(color, mon2lin(base_diffuse_color));
+    return color;
+}
+
+::end shader

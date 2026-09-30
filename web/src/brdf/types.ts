@@ -7,18 +7,24 @@ export interface FloatParam {
   min: number;
   max: number;
   default: number;
+  /** Optional trailing `# comment` from the .brdf parameter line, shown as a tooltip. */
+  description?: string;
 }
 
 export interface BoolParam {
   kind: 'bool';
   name: string;
   default: boolean;
+  /** Optional trailing `# comment` from the .brdf parameter line, shown as a tooltip. */
+  description?: string;
 }
 
 export interface ColorParam {
   kind: 'color';
   name: string;
   default: [number, number, number];
+  /** Optional trailing `# comment` from the .brdf parameter line, shown as a tooltip. */
+  description?: string;
 }
 
 export type ParamDef = FloatParam | BoolParam | ColorParam;

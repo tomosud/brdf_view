@@ -21,6 +21,14 @@ function stripComment(line: string): string {
   return hash >= 0 ? line.slice(0, hash) : line;
 }
 
+/** Trailing `# comment` of a parameter line (project extension: shown as the parameter tooltip). */
+function trailingComment(line: string): string | undefined {
+  const hash = line.indexOf('#');
+  if (hash < 0) return undefined;
+  const text = line.slice(hash + 1).trim();
+  return text === '' ? undefined : text;
+}
+
 function parseParam(line: string): ParamDef | null {
   const t = line.trim().split(/\s+/);
   if (t.length === 0 || t[0] === '') return null;
@@ -72,7 +80,11 @@ export function parseBrdf(name: string, text: string): BrdfDef {
       const cleaned = stripComment(raw);
       if (cleaned.trim() === '') continue;
       const p = parseParam(cleaned);
-      if (p) params.push(p);
+      if (p) {
+        const description = trailingComment(raw);
+        if (description) p.description = description;
+        params.push(p);
+      }
       continue;
     }
 

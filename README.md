@@ -48,6 +48,14 @@ https://rgl.epfl.ch/materials
 3. サンプルを試す場合は `Load sample Brdf` を押して一覧から選びます。
 4. 左側のパラメータで表示する BRDF を選び、値を調整します。
 
+## パラメータのコメント（ツールチップ）
+
+`.brdf` のパラメータ行の末尾に `# 日本語 / English` の形でコメントを書くと、画面のパラメータ名にマウスを乗せたときにツールチップとして表示されます（このプロジェクトの拡張。元の形式ではコメントは無視されるだけなので互換性は保たれます）。
+
+```text
+float roughness 0.02 1.0 0.5  # ラフネス（下限 0.02） / roughness (clamped to >= 0.02)
+```
+
 ## 検証中の BRDF
 
 以下の BRDF は検証中です。表示・比較には使えますが、仕様や参照実装と
@@ -61,6 +69,7 @@ https://rgl.epfl.ch/materials
 | `sample/brdf/openpbr.brdf` | **独自実装**。OpenPBR風の不透明反射近似で、元の参照実装そのものではありません。 |
 | `sample/brdf/substrate.brdf` | **独自実装**。Unreal Substrate Slab のローカルdirect lighting近似です。画面上の `second_roughness_as_clearcoat（custom）` は元実装にない独自拡張です。 |
 | `sample/brdf/callisto_brdf.brdf` | **独自実装・近似**。The Callisto Protocol の Callisto BRDF（UE4 SubsurfaceProfile 拡張）を、出荷データとGPUキャプチャから再構成したローカルBRDFです。SSS・Dual Normal・Glazing Blur は含みません。詳細は [callisto_brdf reproduction status](docs/callisto_brdf_reproduction.md)。 |
+| `sample/brdf/brdf_slice_guide.brdf` | **独自の説明用（物理的な BRDF ではない）**。Image Slice（横 θh・縦 θd）のどの領域が何を表すかを色分けで示します。白 = スペキュラのピーク（左端）、マゼンタ = グレージングのフレネル（左上）、赤 = 再帰反射（右下）、黄 = カメラと同じ方向からの照明（下端、L ≒ V）、青 = 光が地平線付近（N·L→0）、シアン = 視線が地平線付近（N·V→0）、暗赤 = 地平線より下（本来は 0）。領域ごとに `show_*`（表示の切り替え）と `*_color`（色見本＝凡例。変えても Defaults で戻る）を持ちます。 |
 | `sample/brdf/callisto_skin_jacob.brdf` ほか `callisto_skin_generic` / `callisto_eye` / `callisto_teeth` / `callisto_cloth_prisoner` | **派生プリセット**。`callisto_brdf.brdf` と同じシェーダで、初期値だけを素材ごとの出荷値にしたもの。`scripts/gen_callisto_presets.py` で生成（手で編集しない）。将来はビューアのプリセット機能に置き換える予定です。 |
 
 アプリ内では `disney`、`unreal_legacy_pbr`、`openpbr`、`substrate`、`callisto_brdf`（派生プリセットを含む）の名前にも

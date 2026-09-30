@@ -121,20 +121,32 @@ function brdfSection(store: Store, id: string): HTMLElement {
   for (const p of inst.def.params) {
     if (p.kind === 'float') {
       s.append(
-        floatControl(p.name, Number(inst.values.get(p.name)), p.min, p.max, p.default, (v) =>
-          store.setParam(id, p.name, v),
+        floatControl(
+          p.name,
+          Number(inst.values.get(p.name)),
+          p.min,
+          p.max,
+          p.default,
+          (v) => store.setParam(id, p.name, v),
+          p.description,
         ),
       );
     } else if (p.kind === 'bool') {
       s.append(
-        boolControl(parameterDisplayName(p.name), Boolean(inst.values.get(p.name)), (v) =>
-          store.setParam(id, p.name, v),
+        boolControl(
+          parameterDisplayName(p.name),
+          Boolean(inst.values.get(p.name)),
+          (v) => store.setParam(id, p.name, v),
+          p.description,
         ),
       );
     } else {
       s.append(
-        colorControl(p.name, inst.values.get(p.name) as [number, number, number], (v) =>
-          store.setParam(id, p.name, v),
+        colorControl(
+          p.name,
+          inst.values.get(p.name) as [number, number, number],
+          (v) => store.setParam(id, p.name, v),
+          p.description,
         ),
       );
     }
@@ -291,9 +303,10 @@ function sourceFilename(name: string): string {
 
 function reconstructBrdfSource(def: BrdfDef): string {
   const params = def.params.map((p) => {
-    if (p.kind === 'float') return `float ${p.name} ${p.min} ${p.max} ${p.default}`;
-    if (p.kind === 'bool') return `bool ${p.name} ${p.default ? 1 : 0}`;
-    return `color ${p.name} ${p.default[0]} ${p.default[1]} ${p.default[2]}`;
+    const comment = p.description ? `  # ${p.description}` : '';
+    if (p.kind === 'float') return `float ${p.name} ${p.min} ${p.max} ${p.default}${comment}`;
+    if (p.kind === 'bool') return `bool ${p.name} ${p.default ? 1 : 0}${comment}`;
+    return `color ${p.name} ${p.default[0]} ${p.default[1]} ${p.default[2]}${comment}`;
   });
   const chunks = [
     'analytic',

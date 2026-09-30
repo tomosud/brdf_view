@@ -40,27 +40,27 @@ analytic
 # taken directly from the game data.
 
 ::begin parameters
-color base_color 0.62 0.45 0.16
-float specular 0.0 1.0 0.5
-float roughness 0.02 1.0 0.8
-float advanced_strength 0.0 1.0 1.0
-float roughness0_scale 0.0 2.0 1
-float roughness1_scale 0.0 2.0 1
-float lobe_mix 0.0 1.0 1
-float dual_spec_tint_r 0.0 4.0 1
-float dual_spec_tint_g 0.0 4.0 0.8
-float dual_spec_tint_b 0.0 4.0 0.1
-float spec_fresnel_falloff 0.0 2.0 0.75
-float spec_smooth_terminator 0.0 1.0 0.5
-float spec_term_tint_r 0.0 1.0 0
-float spec_term_tint_g 0.0 1.0 0.5
-float spec_term_tint_b 0.0 1.0 1
-float diffuse_smooth_terminator 0.0 1.0 0.5
-float diffuse_fresnel_peak 0.0 9.0 5
-float anti_spec_peak_r 0.0 9.0 0.5
-float anti_spec_peak_g 0.0 9.0 0.5
-float anti_spec_peak_b 0.0 9.0 0.5
-float anti_spec_peak_falloff 0.01 9.0 0.5
+color base_color 0.62 0.45 0.16  # ベースカラー（sRGB）。ゲームではテクスチャ / base colour (sRGB); a texture in the game
+float specular 0.0 1.0 0.5  # UE の Specular（F0 = 0.08×値） / UE Specular (F0 = 0.08 x value)
+float roughness 0.02 1.0 0.8  # ラフネス（下限 0.02） / roughness (clamped to >= 0.02)
+float advanced_strength 0.0 1.0 1.0  # Callisto 項の効き m。0 で標準 UE4 SSP と同じ / strength m of the Callisto terms; 0 = plain UE4 SubsurfaceProfile
+float roughness0_scale 0.0 2.0 1  # 第1ローブのラフネス倍率（SSP Roughness0） / lobe 0 roughness scale (SSP Roughness0)
+float roughness1_scale 0.0 2.0 1  # 第2ローブのラフネス倍率（SSP Roughness1） / lobe 1 roughness scale (SSP Roughness1)
+float lobe_mix 0.0 1.0 1  # 2つのローブの混合量（SSP LobeMix） / blend between the two lobes (SSP LobeMix)
+float dual_spec_tint_r 0.0 4.0 1  # 第2ローブの F0 ティント R（DualSpecularTint） / second lobe F0 tint R (DualSpecularTint)
+float dual_spec_tint_g 0.0 4.0 0.8  # 第2ローブの F0 ティント G / second lobe F0 tint G
+float dual_spec_tint_b 0.0 4.0 0.1  # 第2ローブの F0 ティント B / second lobe F0 tint B
+float spec_fresnel_falloff 0.0 2.0 0.75  # フレネル指数の倍率（5×値）。小さいほど縁が早く明るい / Fresnel exponent scale (5 x value); lower = earlier grazing rise
+float spec_smooth_terminator 0.0 1.0 0.5  # スペキュラの明暗境界の幅（N·L） / specular terminator width in N.L
+float spec_term_tint_r 0.0 1.0 0  # スペキュラ境界幅のティント R（SpecularSmoothTerminatorTint） / specular terminator tint R
+float spec_term_tint_g 0.0 1.0 0.5  # スペキュラ境界幅のティント G。小さいと境界に赤が残る / specular terminator tint G; lower keeps red at the edge
+float spec_term_tint_b 0.0 1.0 1  # スペキュラ境界幅のティント B / specular terminator tint B
+float diffuse_smooth_terminator 0.0 1.0 0.5  # 拡散の明暗境界の幅（N·L） / diffuse terminator width in N.L
+float diffuse_fresnel_peak 0.0 9.0 5  # 拡散フレネルの強さ。L·H→0（逆光・縁）で拡散を何倍にするか / Diffuse Fresnel peak: diffuse multiplier as L.H->0 (backlit rim)
+float anti_spec_peak_r 0.0 9.0 0.5  # 輪郭（N·H→0）で拡散に掛ける色 R（DiffuseAntiSpecularPeak） / diffuse tint R near N.H->0 (DiffuseAntiSpecularPeak)
+float anti_spec_peak_g 0.0 9.0 0.5  # 輪郭で拡散に掛ける色 G / diffuse tint G near N.H->0
+float anti_spec_peak_b 0.0 9.0 0.5  # 輪郭で拡散に掛ける色 B / diffuse tint B near N.H->0
+float anti_spec_peak_falloff 0.01 9.0 0.5  # AntiSpecularPeak の範囲。小さいほど輪郭だけに効く / AntiSpecularPeak falloff; lower = only at the silhouette
 ::end parameters
 
 ::begin shader

@@ -40,6 +40,7 @@ npm run build
 - Edit project-local BRDF samples in `sample/brdf/`, not the generated copies in `web/public/brdfs/`.
 - `web/scripts/copy-assets.ts` copies project-local BRDFs, environments, thumbnails, and meshes into `web/public/`, writes their manifests, and runs automatically before development/build commands.
 - `web/public/brdfs/`, generated environment/mesh directories, and `web/dist/` are generated outputs. A build may update already tracked generated BRDF copies; keep those copies consistent with `sample/brdf/` when they are part of the repository history.
+- Parameter comments: a trailing `# ...` on a parameter line in `::begin parameters` is shown as that parameter's tooltip in the UI (project extension; the original format simply ignores it). Write every parameter comment in Japanese and English, Japanese first, separated by ` / ` (for example `float roughness 0 1 0.5  # ラフネス / roughness`). Keep it to one line that says what the parameter does and where its effect appears. New or edited project-local `.brdf` files must comment every parameter.
 - BRDFs that approximate or extend a referenced model must say so in the `.brdf` header, validation documentation, and user-facing sample/display name. Do not present an approximation or project-specific extension as the original implementation.
 
 ## GitHub Pages
