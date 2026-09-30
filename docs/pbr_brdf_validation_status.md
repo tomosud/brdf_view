@@ -6,6 +6,7 @@
 - `sample/brdf/unreal_legacy_pbr.brdf`
 - `sample/brdf/openpbr.brdf`
 - `sample/brdf/substrate.brdf`
+- `sample/brdf/callisto_brdf.brdf`（詳細は [`callisto_brdf_reproduction.md`](callisto_brdf_reproduction.md)）
 
 この文書は各 `.brdf` が何を実装し、何を代替し、何を省略したかをまとめる。
 Unreal系BRDFの詳細なソース照合状況は

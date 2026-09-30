@@ -12,6 +12,7 @@ const CUSTOM_IMPLEMENTATION_LABELS: Readonly<Record<string, string>> = {
   'openpbr.brdf': `openpbr ${CUSTOM_IMPLEMENTATION_BADGE}`,
   'unreal_legacy_pbr.brdf': `unreal_legacy_pbr ${CUSTOM_IMPLEMENTATION_BADGE}`,
   'substrate.brdf': `substrate ${CUSTOM_IMPLEMENTATION_BADGE}`,
+  'callisto_brdf.brdf': `callisto_brdf ${CUSTOM_IMPLEMENTATION_BADGE}`,
 };
 
 /** User-facing name for bundled samples that distinguishes project-specific implementations. */

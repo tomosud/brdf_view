@@ -2,6 +2,7 @@
   "ashikhman_shirley.brdf",
   "blinn.brdf",
   "blinnphong.brdf",
+  "callisto_brdf.brdf",
   "compare.brdf",
   "cooktorrance.brdf",
   "d_beckmann.brdf",

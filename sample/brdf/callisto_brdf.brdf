@@ -1,0 +1,151 @@
+analytic
+
+# CUSTOM IMPLEMENTATION (独自実装) / APPROXIMATION.
+# Callisto-style BRDF - project-specific reconstruction of the "Callisto BRDF"
+# (The Callisto Protocol, SIGGRAPH 2023 Advances, Jimenez & Petersen).
+# Reconstructed from the game's shipped SubsurfaceProfile values and a GPU capture
+# of its deferred lighting shader (UE4.27 licensee branch). This is not the
+# original implementation and has not been validated against the game output.
+#
+# Included: Lambert diffuse with Diffuse Fresnel, Anti-Specular Peak and Diffuse
+# Smooth Terminator; UE-style dual-lobe GGX (Roughness0/1 scale, LobeMix) with a
+# tinted second lobe F0, Specular Fresnel Falloff and per-channel Specular Smooth
+# Terminator. "advanced_strength" = 0 gives the plain UE4 SubsurfaceProfile BRDF.
+#
+# Not included (renderer side): subsurface scattering / transmission, the
+# SubsurfaceProfile texture and GBuffer packing, Dual Normal (a single N is used
+# for diffuse and specular), Specular Glazing Blur (screen-space stochastic
+# neighbour normal/shadow), area-light GGX normalization, shadows, Realis.
+# Returns the BRDF value without the NoL factor, like the other samples.
+#
+# Defaults: Jacob head profile (SP_Jacob_Head). Other shipped profiles:
+#   generic skin (SSP_HumanSkin): r0 0.44, lobe_mix 0.95, dual tint (0.464,1,0.91),
+#     fresnel_falloff 0.55, anti peak (0,1,0.5), SST 0.3 tint (1,1,1), DST 0.15
+#   eye (*_Eye_Main): r0 1.1, r1 2.0, lobe_mix 0.175, dual tint (1,1.4,0.8),
+#     diffuse_fresnel_peak 6, others default
+#   teeth (*_Teeth): r1 2.0, lobe_mix 0.7, anti peak (1.5,1.5,1) falloff 4,
+#     diffuse_fresnel_peak 4
+#   prisoner cloth (SP_Player_Jacob_Cloth): r0 1, r1 1, lobe_mix 1,
+#     dual tint (1,0.8,0.1), fresnel_falloff 0.75, SST 0.5 tint (0,0.5,1),
+#     DST 0.5, anti peak (0.5,0.5,0.5) falloff 0.5, diffuse_fresnel_peak 5
+# Neutral values: tints 1, peaks 1, falloffs 1, terminators 0.
+# base_color is sRGB-like (pow 2.2); the *_r/_g/_b tints are linear multipliers
+# taken directly from the game data.
+
+::begin parameters
+color base_color 0.72 0.53 0.45
+float specular 0.0 1.0 0.5
+float roughness 0.02 1.0 0.5
+float advanced_strength 0.0 1.0 1.0
+float roughness0_scale 0.0 2.0 0.55
+float roughness1_scale 0.0 2.0 1.0
+float lobe_mix 0.0 1.0 0.9
+float dual_spec_tint_r 0.0 4.0 1.1
+float dual_spec_tint_g 0.0 4.0 0.95
+float dual_spec_tint_b 0.0 4.0 1.0
+float spec_fresnel_falloff 0.0 2.0 0.65
+float spec_smooth_terminator 0.0 1.0 0.3
+float spec_term_tint_r 0.0 1.0 1.0
+float spec_term_tint_g 0.0 1.0 0.7
+float spec_term_tint_b 0.0 1.0 0.85
+float diffuse_smooth_terminator 0.0 1.0 0.15
+float diffuse_fresnel_peak 0.0 9.0 1.0
+float anti_spec_peak_r 0.0 9.0 0.5
+float anti_spec_peak_g 0.0 9.0 1.0
+float anti_spec_peak_b 0.0 9.0 0.0
+float anti_spec_peak_falloff 0.01 9.0 0.125
+::end parameters
+
+::begin shader
+
+const float PI = 3.14159265358979323846;
+const float EPS = 0.000001;
+
+float sqr(float x) { return x * x; }
+float pow4(float x) { float x2 = x * x; return x2 * x2; }
+float saturate(float x) { return clamp(x, 0.0, 1.0); }
+vec3 saturate(vec3 x) { return clamp(x, vec3(0.0), vec3(1.0)); }
+
+vec3 mon2lin(vec3 x) {
+    return vec3(pow(x[0], 2.2), pow(x[1], 2.2), pow(x[2], 2.2));
+}
+
+// smoothstep(0, 1, saturate(x / w)); a zero width disables the terminator.
+float smoothTerminator(float x, float w) {
+    if (w <= 0.0) return 1.0;
+    float t = saturate(x / w);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+float dGGX(float a2, float NoH) {
+    float d = (NoH * a2 - NoH) * NoH + 1.0;
+    return a2 / (PI * d * d);
+}
+
+float visSmithJointApprox(float a2, float NoV, float NoL) {
+    float a = sqrt(a2);
+    float visV = NoL * (NoV * (1.0 - a) + a);
+    float visL = NoV * (NoL * (1.0 - a) + a);
+    return 0.5 / max(visV + visL, EPS);
+}
+
+// UE F_Schlick with a variable exponent (5 * Specular Fresnel Falloff).
+vec3 fresnelFalloff(vec3 F0, float VoH, float exponent) {
+    float Fc = pow(1.0 - VoH, exponent);
+    return F0 + (vec3(saturate(50.0 * F0[1])) - F0) * Fc;
+}
+
+vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
+    float NoLRaw = dot(N, L);
+    float NoVRaw = dot(N, V);
+    if (NoLRaw <= 0.0 || NoVRaw <= 0.0) return vec3(0.0);
+
+    float m = saturate(advanced_strength);
+    vec3 H = normalize(L + V);
+    float NoL = saturate(NoLRaw);
+    float NoV = saturate(abs(NoVRaw) + 0.00001);
+    float NoH = saturate(dot(N, H));
+    float LoH = saturate(dot(L, H));
+    float VoH = saturate(dot(V, H));
+
+    vec3 baseColor = saturate(mon2lin(base_color));
+    vec3 F0 = vec3(0.08 * saturate(specular));
+    float rough = clamp(roughness, 0.02, 1.0);
+
+    // Callisto parameters, blended from neutral by advanced_strength.
+    vec3 antiPeak = mix(vec3(1.0), vec3(anti_spec_peak_r, anti_spec_peak_g, anti_spec_peak_b), m);
+    float antiFall = max(mix(1.0, anti_spec_peak_falloff, m), 0.00001);
+    vec3 dualTint = mix(vec3(1.0), vec3(dual_spec_tint_r, dual_spec_tint_g, dual_spec_tint_b), m);
+    float diffFres = mix(1.0, diffuse_fresnel_peak, m);
+    float diffTerm = m * diffuse_smooth_terminator;
+    vec3 specTermW = m * spec_smooth_terminator * vec3(spec_term_tint_r, spec_term_tint_g, spec_term_tint_b);
+    float fresFall = mix(1.0, spec_fresnel_falloff, m);
+
+    // ---- diffuse ----
+    vec3 diffuse = baseColor / PI;
+    diffuse *= mix(diffFres, 1.0, sqrt(LoH));                         // Diffuse Fresnel
+    diffuse *= mix(antiPeak, vec3(1.0), pow(NoH, antiFall));          // Anti-Specular Peak
+    diffuse *= smoothTerminator(NoL, diffTerm);                       // Diffuse Smooth Terminator
+
+    // ---- specular: dual-lobe GGX ----
+    float r0 = mix(rough, clamp(rough * roughness0_scale, 0.02, 1.0), m);
+    float r1 = mix(rough, clamp(rough * roughness1_scale, 0.02, 1.0), m);
+    float exponent = 5.0 * max(fresFall, 0.00001);
+    vec3 F_0 = fresnelFalloff(F0, VoH, exponent);
+    vec3 F_1 = fresnelFalloff(F0 * dualTint, VoH, exponent);         // tinted second lobe
+    float a2_0 = pow4(r0);
+    float a2_1 = pow4(r1);
+    vec3 lobe0 = dGGX(a2_0, NoH) * visSmithJointApprox(a2_0, NoV, NoL) * F_0;
+    vec3 lobe1 = dGGX(a2_1, NoH) * visSmithJointApprox(a2_1, NoV, NoL) * F_1;
+    vec3 spec = mix(lobe0, lobe1, lobe_mix);
+
+    // per-channel Specular Smooth Terminator; the tint fades toward grazing view
+    vec3 w = mix(vec3(dot(specTermW, vec3(1.0 / 3.0))), specTermW, min(NoV, 1.0));
+    spec *= vec3(smoothTerminator(NoL, w[0]),
+                 smoothTerminator(NoL, w[1]),
+                 smoothTerminator(NoL, w[2]));
+
+    return diffuse + spec;
+}
+
+::end shader

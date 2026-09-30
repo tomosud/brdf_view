@@ -34,7 +34,7 @@ https://rgl.epfl.ch/materials
 - `Polar Plot`: 角度方向の分布を極座標で確認します。
 - `Theta V / Theta H / Theta D`: Cartesian plot で角度スライスを確認します。
 - `Image Slice`: half/difference angle の断面を画像または高さ表示で確認します。
-- `Lit Object`: HDRI 環境光で球やティーポットを照らして確認します。
+- `Lit Object`: HDRI 環境光で球・ティーポット・頭部モデル（`dm`）などを照らして確認します。
 - `Lit Sphere`: 元 BRDF Explorer に近い球表示で確認します。
 
 `ALBEDO` view は廃止しました。Monte Carlo 積分を含む巨大 shader が通常
@@ -60,8 +60,9 @@ https://rgl.epfl.ch/materials
 | `sample/brdf/unreal_legacy_pbr.brdf` | **独自実装**。Unreal legacy Default Lit のローカルBRDF近似です。 |
 | `sample/brdf/openpbr.brdf` | **独自実装**。OpenPBR風の不透明反射近似で、元の参照実装そのものではありません。 |
 | `sample/brdf/substrate.brdf` | **独自実装**。Unreal Substrate Slab のローカルdirect lighting近似です。画面上の `second_roughness_as_clearcoat（custom）` は元実装にない独自拡張です。 |
+| `sample/brdf/callisto_brdf.brdf` | **独自実装・近似**。The Callisto Protocol の Callisto BRDF（UE4 SubsurfaceProfile 拡張）を、出荷データとGPUキャプチャから再構成したローカルBRDFです。SSS・Dual Normal・Glazing Blur は含みません。詳細は [callisto_brdf reproduction status](docs/callisto_brdf_reproduction.md)。 |
 
-アプリ内では `disney`、`unreal_legacy_pbr`、`openpbr`、`substrate` の名前にも
+アプリ内では `disney`、`unreal_legacy_pbr`、`openpbr`、`substrate`、`callisto_brdf` の名前にも
 `[custom implementation / 独自実装]` を付けて表示します。
 読み込み後のBRDF見出しでは、名前とこの表記を2行に分けて表示します。
 
@@ -83,6 +84,8 @@ https://rgl.epfl.ch/materials
   です（RGB 版 `_rgb.bsdf` を使用してください）。
 
 ## 開発
+
+Windows ではリポジトリ直下の `run.bat` をダブルクリックするだけで、依存関係のインストール（初回・`package-lock.json` 更新時の `npm ci`）と開発サーバの起動まで行い、ブラウザが開きます。`run.bat pages` は本番ビルドを GitHub Pages と同じ `/brdf_view/` で表示します。
 
 ```powershell
 cd web
