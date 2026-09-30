@@ -55,8 +55,25 @@ Last updated: 2026-09-30
 | `anti_spec_peak_rgb` | DiffuseAntiSpecularPeak | 1 | (0.5,1,0) | (0,1,0.5) | 1 | (1.5,1.5,1) | (0.5,0.5,0.5) |
 | `anti_spec_peak_falloff` | DiffuseAntiSpecularPeakFalloff | 1 | 0.125 | 0.125 | 1 | 4 | 0.5 |
 
-- `*_r/_g/_b` のティントは、ゲームデータの線形値をそのまま使います（`pow 2.2` はかけない）。`base_color` だけは他のサンプルと同じく `pow(color, 2.2)` です
+- `*_r/_g/_b` のティントは、ゲームデータの線形値をそのまま使います（sRGB → リニア変換はかけない）。`base_color` だけは他のサンプルと同じく `mon2lin()`（正確な sRGB 曲線）でリニアにします
 - 1 を超えるティント（DualSpecularTint 1.1、歯の AntiSpecularPeak 1.5 など）があるので、color ではなく float 3 本にしています
+
+## 派生プリセット
+
+素材ごとの初期値を入れた派生ファイルです。シェーダは `callisto_brdf.brdf` と同一で、
+`python scripts/gen_callisto_presets.py` で生成します（手で編集しない）。
+`callisto_brdf.brdf` のシェーダやパラメータを変えたら、再生成してください。
+ビューアにプリセット機能ができたら、これらは `callisto_brdf.brdf` のプリセットに置き換える予定です。
+
+| ファイル | 元のプロファイル | 備考 |
+|---|---|---|
+| `callisto_skin_jacob.brdf` | `SP_Jacob_Head` | `callisto_brdf.brdf` の初期値と同じ |
+| `callisto_skin_generic.brdf` | `SSP_HumanSkin` | NPC 用の汎用肌 |
+| `callisto_eye.brdf` | `SP_*_Eye_Main` | Callisto 項のみ。虹彩法線・角膜（Eye モデル）は含まない |
+| `callisto_teeth.brdf` | `SP_Jacob_Teeth` | Roughness0/1・LobeMix は SSP テクスチャの値（0.75 / 2.0 / 0.7） |
+| `callisto_cloth_prisoner.brdf` | `SP_Player_Jacob_Cloth` | 囚人服 |
+
+`base_color` / `specular` / `roughness` はゲームではテクスチャから来るので、プリセットでは代表値です。
 
 ## 確認済みの点
 

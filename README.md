@@ -61,8 +61,9 @@ https://rgl.epfl.ch/materials
 | `sample/brdf/openpbr.brdf` | **独自実装**。OpenPBR風の不透明反射近似で、元の参照実装そのものではありません。 |
 | `sample/brdf/substrate.brdf` | **独自実装**。Unreal Substrate Slab のローカルdirect lighting近似です。画面上の `second_roughness_as_clearcoat（custom）` は元実装にない独自拡張です。 |
 | `sample/brdf/callisto_brdf.brdf` | **独自実装・近似**。The Callisto Protocol の Callisto BRDF（UE4 SubsurfaceProfile 拡張）を、出荷データとGPUキャプチャから再構成したローカルBRDFです。SSS・Dual Normal・Glazing Blur は含みません。詳細は [callisto_brdf reproduction status](docs/callisto_brdf_reproduction.md)。 |
+| `sample/brdf/callisto_skin_jacob.brdf` ほか `callisto_skin_generic` / `callisto_eye` / `callisto_teeth` / `callisto_cloth_prisoner` | **派生プリセット**。`callisto_brdf.brdf` と同じシェーダで、初期値だけを素材ごとの出荷値にしたもの。`scripts/gen_callisto_presets.py` で生成（手で編集しない）。将来はビューアのプリセット機能に置き換える予定です。 |
 
-アプリ内では `disney`、`unreal_legacy_pbr`、`openpbr`、`substrate`、`callisto_brdf` の名前にも
+アプリ内では `disney`、`unreal_legacy_pbr`、`openpbr`、`substrate`、`callisto_brdf`（派生プリセットを含む）の名前にも
 `[custom implementation / 独自実装]` を付けて表示します。
 読み込み後のBRDF見出しでは、名前とこの表記を2行に分けて表示します。
 

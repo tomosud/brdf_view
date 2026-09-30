@@ -18,7 +18,11 @@ float saturate(float x) { return clamp(x, 0.0, 1.0); }
 vec3 saturate(vec3 x) { return clamp(x, vec3(0.0), vec3(1.0)); }
 
 vec3 mon2lin(vec3 x) {
-    return vec3(pow(x[0], 2.2), pow(x[1], 2.2), pow(x[2], 2.2));
+    // Exact sRGB EOTF (IEC 61966-2-1), matching the color picker's Linear values.
+    vec3 c = clamp(x, vec3(0.0), vec3(1.0));
+    vec3 lo = c / 12.92;
+    vec3 hi = pow((c + vec3(0.055)) / 1.055, vec3(2.4));
+    return mix(hi, lo, vec3(lessThanEqual(c, vec3(0.04045))));
 }
 
 vec3 diffuseChan2024(vec3 diffuseColor, float rough, float NoH, float VoH)
