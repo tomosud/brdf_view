@@ -18,6 +18,7 @@ import { BVH_TEXTURE_WIDTH, buildBvhAsync, type PackedBvh } from '../gl/bvh.js';
 import { perspective, lookAt, DEG2RAD } from '../gl/mat4.js';
 import { TONEMAP_GLSL, ToneMapper } from '../gl/tonemap.js';
 import { SssPipeline, sssDefines, sssParamsOf, sssSupport } from '../gl/sss.js';
+import { ModelTextures } from './model-textures.js';
 import { boolControl, floatControl, selectControl } from '../ui/controls.js';
 import { parseHdr } from '../io/hdr.js';
 import type { HdrImage } from '../io/hdr.js';
@@ -123,12 +124,17 @@ export class LitObjectView extends BaseView {
   private meshName = 'sphere';
   private hideBackground = false;
   private grayscaleIBL = false;
+  /** Rotation of the environment about the vertical axis, in degrees. */
+  private envRotation = 0;
   private occlusion: OcclusionMode = 'sh';
   /**
-   * Pseudo SSS (src/gl/sss.ts): blur the diffuse light in screen space. Only
-   * drawn for a .brdf that declares the hook functions; otherwise ignored.
+   * Pseudo SSS (src/gl/sss.ts): blur the diffuse light in screen space. On by
+   * default, but only drawn for a .brdf that declares the hook functions; for
+   * every other BRDF the regular path is used and this flag has no effect.
    */
-  private sssEnabled = false;
+  private sssEnabled = true;
+  /** Default textures of the selected mesh (assets/obj/textures.json), attached to the BRDF on display. */
+  private modelTextures: ModelTextures;
   /** Real size (cm) of the mesh's largest dimension: converts the SSS radius (cm) to scene units. */
   private sizeCm = DEFAULT_SIZE_CM;
   /** Size the current mesh suggests (its own unit, or DEFAULT_SIZE_CM). */
@@ -163,6 +169,7 @@ export class LitObjectView extends BaseView {
     super('litObject', container, store, 'Lit Object');
     const gl = this.gl;
     this.envName = envNames[0] ?? '';
+    this.modelTextures = new ModelTextures(store);
 
     this.floatRenderTargets = !!gl.getExtension('EXT_color_buffer_float');
     this.env = uploadEnv(gl, envImg);
@@ -220,9 +227,11 @@ export class LitObjectView extends BaseView {
       exposure: round6(this.exposure),
       hideBackground: this.hideBackground,
       grayIBL: this.grayscaleIBL,
+      envRotation: round6(this.envRotation),
       occlusion: this.occlusion,
       sss: this.sssEnabled,
       sizeCm: round6(this.sizeCm),
+      modelTextures: this.modelTextures.isEnabled(),
       camera: {
         theta: round6(this.lookTheta * RAD2DEG),
         phi: round6(this.lookPhi * RAD2DEG),
@@ -233,6 +242,9 @@ export class LitObjectView extends BaseView {
 
   override async applyViewState(s: ViewState): Promise<void> {
     const loads: Promise<void>[] = [];
+    // before the object load, so that a new mesh already follows the setting
+    const modelTextures = bool(s, 'modelTextures');
+    if (modelTextures !== undefined) this.modelTextures.setEnabled(modelTextures);
     const env = str(s, 'env');
     if (env && env !== this.envName) {
       if (this.envNames.includes(env)) loads.push(this.loadEnvironment(env));
@@ -250,6 +262,7 @@ export class LitObjectView extends BaseView {
     this.exposure = num(s, 'exposure') ?? this.exposure;
     this.hideBackground = bool(s, 'hideBackground') ?? this.hideBackground;
     this.grayscaleIBL = bool(s, 'grayIBL') ?? this.grayscaleIBL;
+    this.envRotation = num(s, 'envRotation') ?? this.envRotation;
     this.occlusion = parseOcclusion(s.occlusion) ?? this.occlusion;
     this.sssEnabled = bool(s, 'sss') ?? this.sssEnabled;
     const cam = obj(s, 'camera');
@@ -277,6 +290,7 @@ export class LitObjectView extends BaseView {
 
   protected override async prepareSnapshot(): Promise<void> {
     await this.pendingLoad;
+    await this.modelTextures.settled();
     if (this.occlusion === 'ray') await this.ensureBvh();
   }
 
@@ -620,6 +634,7 @@ export class LitObjectView extends BaseView {
       this.bg.u.f('envIntensity', 1.0);
       this.bg.u.f('hideBackground', this.hideBackground ? 1 : 0);
       this.bg.u.f('grayscaleIBL', this.grayscaleIBL ? 1 : 0);
+      this.bg.u.f('envRotation', this.envRotation * DEG2RAD);
       gl.bindVertexArray(this.emptyVAO);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.bindVertexArray(null);
@@ -653,6 +668,7 @@ export class LitObjectView extends BaseView {
     prog.u.f('renderWithIBL', this.renderWithIBL ? 1 : 0);
     prog.u.f('envIntensity', 1.0);
     prog.u.f('grayscaleIBL', this.grayscaleIBL ? 1 : 0);
+    prog.u.f('envRotation', this.envRotation * DEG2RAD);
     const occlusionMode = this.renderWithIBL ? this.effectiveOcclusion() : 0;
     prog.u.i('occlusionMode', occlusionMode);
     prog.u.f('rayEpsilon', RAY_EPSILON * this.meshRadius);
@@ -971,6 +987,7 @@ export class LitObjectView extends BaseView {
     if (name === 'sphere') {
       this.meshName = name;
       this.setMesh(buildSphere(1.0, 100, 100));
+      this.modelTextures.setMesh(name);
       refreshControls();
       this.resetAccumulation();
       return;
@@ -980,6 +997,7 @@ export class LitObjectView extends BaseView {
       if (!res.ok) throw new Error(`${res.status}`);
       this.meshName = name;
       this.setMesh(parseObjMesh(await res.text()));
+      this.modelTextures.setMesh(name);
       refreshControls();
       this.resetAccumulation();
     } catch (e) {
@@ -1019,6 +1037,13 @@ export class LitObjectView extends BaseView {
         '疑似 SSS（独自実装・近似）: 拡散光だけを画面上でぼかす表面下散乱。sss_ で始まるパラメータで調整。対応する .brdf（BRDF_sss_diffuse を持つもの）でのみ有効 / ' +
           'Pseudo SSS (custom approximation): screen-space subsurface scattering that blurs only the diffuse light; tuned by the sss_ parameters. Only for a .brdf that declares BRDF_sss_diffuse.',
       ),
+      boolControl(
+        'Model tex',
+        this.modelTextures.isEnabled(),
+        (v) => this.modelTextures.setEnabled(v),
+        'モデルに付属するテクスチャ（頭部モデル dm のノーマル・ベースカラー・ラフネス）を、表示中の BRDF の対応するパラメータに自動で貼る。左のパネルで外した分は、モデルを選び直すまで戻らない / ' +
+          'Attach the textures that come with the model (dm head: normal, base colour, roughness) to the matching parameters of the BRDF on display. One removed in the panel stays off until the model is selected again.',
+      ),
     );
     const sizeControl = floatControl(
       'Size (cm)',
@@ -1050,8 +1075,23 @@ export class LitObjectView extends BaseView {
         'IBL only: self-occlusion from the mesh. SH = approximation baked per vertex at load, Ray = exact shadow ray per sample (slower to converge).',
     );
 
+    const envRotationControl = floatControl(
+      'Env rot',
+      this.envRotation,
+      -180,
+      180,
+      0,
+      (v) => {
+        this.envRotation = v;
+        this.resetAccumulation();
+      },
+      'IBL の環境を縦軸（y）まわりに回す角度（度）。背景と照明の両方が回る / ' +
+        'Rotation of the IBL environment about the vertical (y) axis, in degrees; rotates both the background and the lighting.',
+    );
+
     this.footer.append(
       this.buildEnvironmentSelect(),
+      envRotationControl,
       selectControl(
         'Object',
         [

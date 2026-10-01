@@ -42,6 +42,7 @@ npm run build
 - `web/public/brdfs/`, generated environment/mesh directories, and `web/dist/` are generated outputs. A build may update already tracked generated BRDF copies; keep those copies consistent with `sample/brdf/` when they are part of the repository history.
 - Parameter comments: a trailing `# ...` on a parameter line in `::begin parameters` is shown as that parameter's tooltip in the UI (project extension; the original format simply ignores it). Write every parameter comment in Japanese and English, Japanese first, separated by ` / ` (for example `float roughness 0 1 0.5  # ラフネス / roughness`). Keep it to one line that says what the parameter does and where its effect appears. New or edited project-local `.brdf` files must comment every parameter.
 - BRDFs that approximate or extend a referenced model must say so in the `.brdf` header, validation documentation, and user-facing sample/display name. Do not present an approximation or project-specific extension as the original implementation.
+- Default textures of a Lit Object mesh: `assets/obj/textures.json` names, per `.obj`, a normal map and images for parameters (matched by parameter name), stored in `assets/obj/textures/` (keep them web-sized: 2048², WebP). `web/src/views/model-textures.ts` attaches them to the BRDF on display when that mesh is selected (state `litObject.modelTextures`, on by default); images the user attaches win, a removed default stays removed until the mesh is selected again, and defaults are never saved to IndexedDB. Captures that must show the bare model (BRDF comparisons, validation figures) set `litObject.modelTextures=false` and `litObject.sss=false`.
 
 ## Automation API and State Format
 
@@ -52,7 +53,7 @@ npm run build
 
 ## Pseudo SSS (Lit Object)
 
-- Lit Object can blur the diffuse light in screen space ("SSS" checkbox, state `litObject.sss`, off by default). It is a custom approximation and must be described as such in the UI text, `.brdf` headers and docs. Read `docs/pseudo_sss.md` before changing it.
+- Lit Object can blur the diffuse light in screen space ("SSS" checkbox, state `litObject.sss`, on by default, but only processed for a `.brdf` that declares the hooks). It is a custom approximation and must be described as such in the UI text, `.brdf` headers and docs. Read `docs/pseudo_sss.md` before changing it.
 - Everything specific to the feature lives in `web/src/gl/sss.ts` (hook detection, parameters, kernel, render targets and passes). `iblObject.frag` only differs inside `#ifdef BRDF_SSS`; `lit-object.ts` only chooses the path. With SSS off, or a `.brdf` without the hooks, the regular shader and targets are used unchanged. Keep it that way: no SSS code in the regular path.
 - A `.brdf` opts in by declaring `vec3 BRDF_sss_diffuse(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y)` (diffuse term without albedo) and optionally `vec3 BRDF_sss_albedo()`, with the contract `BRDF() == BRDF_sss_diffuse() * BRDF_sss_albedo() + specular`. Values come from the optional float parameters `sss_strength`, `sss_scatter_radius`, `sss_falloff_r/g/b`, `sss_subsurface_r/g/b`.
 - After changing the feature or adding the hooks to a `.brdf`, run `python scripts/verify_sss.py` (hook contract and filter against a Python reference) and, for the Callisto files, `python scripts/gen_callisto_presets.py` then `python scripts/verify_callisto_brdf.py`.

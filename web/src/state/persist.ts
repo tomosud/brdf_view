@@ -109,14 +109,13 @@ async function saveSession(store: Store): Promise<void> {
       origin.kind === 'bundled'
         ? { kind: 'bundled', filename: origin.filename, name: inst.def.name, values, visible: inst.visible }
         : { kind: 'text', filename: '', name: inst.def.name, content: origin.content, values, visible: inst.visible };
-    if (inst.textures?.size) {
-      saved.textures = {};
-      for (const [name, t] of inst.textures) {
-        saved.textures[name] = { id: t.id, fileName: t.fileName, channel: t.channel, colorSpace: t.colorSpace };
-        images.set(t.id, t.blob);
-      }
+    // A mesh's default textures (views/model-textures.ts) are not saved: they come back with the mesh.
+    for (const [name, t] of inst.textures ?? []) {
+      if (t.modelDefault) continue;
+      (saved.textures ??= {})[name] = { id: t.id, fileName: t.fileName, channel: t.channel, colorSpace: t.colorSpace };
+      images.set(t.id, t.blob);
     }
-    if (inst.normalMap) {
+    if (inst.normalMap && !inst.normalMap.modelDefault) {
       const n = inst.normalMap;
       saved.normalMap = { id: n.id, fileName: n.fileName, flipY: n.flipY, strength: n.strength };
       images.set(n.id, n.blob);
@@ -246,7 +245,9 @@ export async function restoreImages(store: Store): Promise<void> {
   const used = new Set<SavedBrdf>();
   let changed = false;
   for (const inst of store.state.brdfs) {
-    if (inst.textures?.size || inst.normalMap) continue;
+    // images the user attached win; a mesh's default textures do not count
+    const own = [...(inst.textures?.values() ?? [])].some((t) => !t.modelDefault) || (!!inst.normalMap && !inst.normalMap.modelDefault);
+    if (own) continue;
     const o = inst.def.origin;
     const saved = session.brdfs.find(
       (s) =>

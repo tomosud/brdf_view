@@ -72,6 +72,12 @@ export interface TextureImage {
   url: string;
   width: number;
   height: number;
+  /**
+   * Set on a default texture of a Lit Object mesh (the mesh's name, see
+   * views/model-textures.ts): attached automatically, removed with the mesh,
+   * and not saved with the session.
+   */
+  modelDefault?: string;
 }
 
 export type TextureChannel = 'rgb' | 'r' | 'g' | 'b' | 'a';

@@ -1,0 +1,18 @@
+{
+  "dm.obj": {
+    "normalMap": { "file": "T_emily_Normal.webp", "flipY": true, "strength": 1 },
+    "params": [
+      {
+        "names": ["base_color", "baseColor", "albedo", "diffuse_albedo", "diffuse_color"],
+        "file": "T_emily_BC.webp",
+        "colorSpace": "srgb"
+      },
+      {
+        "names": ["roughness", "specular_roughness"],
+        "file": "T_emily_MRAO.webp",
+        "channel": "g",
+        "colorSpace": "linear"
+      }
+    ]
+  }
+}

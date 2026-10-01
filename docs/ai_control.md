@@ -29,7 +29,7 @@ BRDF Explorer Web を、人の手を介さずに操作するための入口は 3
   "slice":     { "mode": "image", "phiD": 90, "gamma": 2.2, "exposure": 0, "height": 0.065,
                  "squareThetaH": false, "showChroma": false, "surfaceZoom": 1 },
   "litObject": { "env": "ibl.hdr", "object": "sphere", "ibl": true, "samples": 128, "gamma": 2.2, "exposure": 0,
-                 "hideBackground": false, "grayIBL": false, "occlusion": "sh", "sss": false, "sizeCm": 20,
+                 "hideBackground": false, "grayIBL": false, "envRotation": 0, "occlusion": "sh", "sss": true, "sizeCm": 20, "modelTextures": true,
                  "camera": { "theta": 68.75, "phi": 34.38, "zoom": 1 } },
   "litSphere": { "brightness": 1, "gamma": 2.2, "exposure": 0, "doubleTheta": true, "nDotL": true }
 }
@@ -46,9 +46,11 @@ BRDF Explorer Web を、人の手を介さずに操作するための入口は 3
 | `display.hdr` | `true` で同じ 3 つのビューを HDR で表示する（既定 `false`、ツールバーの「HDR」、`data-testid="ctl-hdr"`）。1.0 = SDR の白 = 203 nits。`toneMap` もオンなら ACES 2.0 の 1000 nits・P3-D65 版。HDR 表示でない画面では SDR で表示する。`render()` / `capture.bat` の PNG は常に SDR（この値に関係なく同じ画像） |
 | `plot3d` ほか | 各ビューの下にある操作部品とカメラ |
 | `litObject.ibl` | `true` = HDRI による IBL（従来の表示）。`false` = 入射光の角度からの平行光 1 つ（新しく UI にも「IBL」チェックを追加） |
+| `litObject.envRotation` | IBL の環境を縦軸（y）まわりに回す角度（度、UI の「Env rot」、`ctl-env-rot`、既定 0）。背景と照明の両方が回る。正の値で、正面カメラ（`camera = { theta: 90, phi: 90 }`）から見て、環境の中のものが左から手前、右へと動く。平行光（`ibl: false`）には効かない |
 | `litObject.samples` | IBL の 1 パスあたりのサンプル数（既定 128） |
 | `litObject.occlusion` | IBL でのモデル自身による遮蔽（UI の「Occlusion」）。`"off"`（なし）、`"sh"`（既定。読み込み時に頂点ごとに事前計算した近似）、`"ray"`（サンプルごとに影のレイを飛ばす正確な判定。重く、収束に時間がかかる）。以前の形式の `true` は `"sh"`、`false` は `"off"` として読む。平行光（`ibl: false`）には効かない |
-| `litObject.sss` | 疑似 SSS（UI の「SSS」、`data-testid="ctl-sss"`、既定 `false`）。拡散光だけを画面上でぼかす。独自実装・近似。対応する `.brdf`（`BRDF_sss_diffuse` を持つもの。今は `callisto_*`）でだけ効き、ほかでは無視される。値は `.brdf` の `sss_*` パラメータ。[pseudo_sss.md](pseudo_sss.md) |
+| `litObject.modelTextures` | モデルに付属するテクスチャを、表示中の BRDF に自動で貼る（UI の「Model tex」、`ctl-model-tex`、既定 `true`）。今は `dm.obj` だけが持つ（ノーマルマップ、ベースカラー、ラフネス）。貼られた画像は `getState()` の `brdfs[].textures` / `normalMap` に `modelDefault: true` 付きで出る。素のモデルを撮るときは `false` にする。`setTexture` / `--texture` で貼った画像が優先 |
+| `litObject.sss` | 疑似 SSS（UI の「SSS」、`data-testid="ctl-sss"`、既定 `true`）。拡散光だけを画面上でぼかす。独自実装・近似。対応する `.brdf`（`BRDF_sss_diffuse` を持つもの。今は `callisto_*`）でだけ効き、ほかでは無視される。値は `.brdf` の `sss_*` パラメータ。[pseudo_sss.md](pseudo_sss.md) |
 | `litObject.sizeCm` | モデルの最大の辺の実寸（cm、UI の「Size (cm)」、`ctl-size-cm`）。疑似 SSS の距離（cm）を画面上の大きさに直すのに使う。`object` を変えると、そのモデルの既定値（`dm.obj` は 30.17、ほかは 20）に戻る。`object` と一緒に書いた場合は、書いた値が優先 |
 
 `setState` の決まり:
@@ -228,7 +230,7 @@ UI を直接操作するとき（Playwright のロケータなど）に使う。
 ## 7. 互換性
 
 - 既存の `.brdf` の読み方は変えていない。評価用のシェーダ雛形 `evaluate.frag` も、表示用と同じ差し込み（`::INSERT_UNIFORMS_HERE::` など）を使う
-- `litObject.sss` と `litObject.sizeCm` は 2026-10-01 に追加。書かなければ `sss` は `false` のままなので、以前の状態や URL は同じ画像になる。`callisto_*.brdf` に `sss_*` パラメータが増えたが、状態に書かれていなければ `.brdf` の既定値が使われる
+- `litObject.sss`、`litObject.sizeCm`、`litObject.modelTextures` は 2026-10-01 に追加。**既定は `sss: true`、`modelTextures: true`** なので、これらを書いていない以前の状態や URL は、次の場合に画像が変わる: (a) `callisto_*.brdf` を Lit Object の IBL / 平行光で表示（疑似 SSS が掛かる）、(b) `object: "dm.obj"`（テクスチャが貼られる）。以前と同じ画像にするには `litObject.sss=false`、`litObject.modelTextures=false` を足す。`callisto_*.brdf` に `sss_*` パラメータが増えたが、状態に書かれていなければ `.brdf` の既定値が使われる
 - 状態の形式を互換性の無い形で変えるときは `v` を上げ、古い `v=1` の読み込みを残す
 - GitHub Pages では URL と JS API が動く。コマンドラインはローカル専用（静的サイトにはサーバ機能を足していない）
 

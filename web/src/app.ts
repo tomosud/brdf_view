@@ -85,6 +85,8 @@ async function main(): Promise<void> {
     console.error('IBL environment load failed', e);
   }
   addView(new LitSphereView(viewRows.bottom, store));
+  mountColumnSplitters(viewRows.top, 'top');
+  mountColumnSplitters(viewRows.bottom, 'bottom');
 
   wireFileLoading(store, views);
   void wireSampleBrdfs(store);
@@ -141,15 +143,23 @@ function mountViewRows(views: HTMLElement): { top: HTMLElement; bottom: HTMLElem
   splitter.title = 'Resize view rows';
   const bottom = document.createElement('div');
   bottom.className = 'view-row';
+  splitter.title = 'Drag to resize the view rows (double-click: reset)';
+  splitter.dataset.testid = 'view-row-resizer';
   views.append(top, splitter, bottom);
+
+  // Either row can be shrunk down to its title bars, so one row can take almost all the height.
+  const saved = Number(localStorage.getItem(ROW_SIZE_KEY));
+  if (saved > 0 && saved < 100) views.style.setProperty('--top-row-size', `${saved}%`);
 
   splitter.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     splitter.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
       const rect = views.getBoundingClientRect();
-      const ratio = Math.max(0.25, Math.min(0.78, (ev.clientY - rect.top) / rect.height));
+      const min = MIN_ROW_PX / rect.height;
+      const ratio = Math.max(min, Math.min(1 - min, (ev.clientY - rect.top) / rect.height));
       views.style.setProperty('--top-row-size', `${ratio * 100}%`);
+      localStorage.setItem(ROW_SIZE_KEY, String(ratio * 100));
     };
     const up = (ev: PointerEvent) => {
       splitter.releasePointerCapture(ev.pointerId);
@@ -159,8 +169,81 @@ function mountViewRows(views: HTMLElement): { top: HTMLElement; bottom: HTMLElem
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   });
+  splitter.addEventListener('dblclick', () => {
+    views.style.removeProperty('--top-row-size');
+    localStorage.removeItem(ROW_SIZE_KEY);
+  });
 
   return { top, bottom };
+}
+
+const ROW_SIZE_KEY = 'viewTopRowSize';
+/** Smallest height of a view row / width of a view while dragging a splitter (about a title bar). */
+const MIN_ROW_PX = 40;
+const MIN_VIEW_PX = 48;
+
+/**
+ * Put a draggable splitter between the views of one row, so that a view (e.g.
+ * Lit Object) can be made wider at the expense of its neighbour. Widths are kept
+ * as weights (fr), saved in localStorage; double-click a splitter to reset the row.
+ * Call once all views of the row exist.
+ */
+function mountColumnSplitters(row: HTMLElement, key: string): void {
+  const viewEls = Array.from(row.querySelectorAll<HTMLElement>(':scope > .view'));
+  if (viewEls.length < 2) return;
+  const storageKey = `viewColumns.${key}`;
+  let weights = viewEls.map(() => 1);
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey) ?? 'null');
+    if (Array.isArray(saved) && saved.length === weights.length && saved.every((w) => typeof w === 'number' && w > 0)) weights = saved;
+  } catch {
+    // ignore a corrupt entry
+  }
+  const apply = () => {
+    row.style.columnGap = '0';
+    row.style.gridTemplateColumns = weights.map((w) => `minmax(0, ${w}fr)`).join(' 8px ');
+  };
+  apply();
+
+  viewEls.slice(0, -1).forEach((left, i) => {
+    const right = viewEls[i + 1];
+    const splitter = document.createElement('div');
+    splitter.className = 'view-col-resizer';
+    splitter.setAttribute('role', 'separator');
+    splitter.setAttribute('aria-orientation', 'vertical');
+    splitter.title = 'Drag to resize the views (double-click: reset)';
+    splitter.dataset.testid = `view-col-resizer-${key}-${i}`;
+    left.after(splitter);
+
+    splitter.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      splitter.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const a = left.getBoundingClientRect().width;
+      const b = right.getBoundingClientRect().width;
+      const pair = weights[i] + weights[i + 1];
+      const move = (ev: PointerEvent) => {
+        const min = Math.min(MIN_VIEW_PX, (a + b) / 2);
+        const na = Math.max(min, Math.min(a + b - min, a + ev.clientX - startX));
+        weights[i] = (pair * na) / (a + b);
+        weights[i + 1] = pair - weights[i];
+        apply();
+        localStorage.setItem(storageKey, JSON.stringify(weights));
+      };
+      const up = (ev: PointerEvent) => {
+        splitter.releasePointerCapture(ev.pointerId);
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+    splitter.addEventListener('dblclick', () => {
+      weights = viewEls.map(() => 1);
+      apply();
+      localStorage.removeItem(storageKey);
+    });
+  });
 }
 
 function wireColResizer(): void {

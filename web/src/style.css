@@ -201,7 +201,8 @@ html, body {
 
 #views {
   display: grid;
-  grid-template-rows: minmax(180px, var(--top-row-size, 33.333%)) 8px minmax(180px, 1fr);
+  /* either row can be dragged down to its title bars (app.ts: mountViewRows) */
+  grid-template-rows: minmax(0, var(--top-row-size, 33.333%)) 8px minmax(0, 1fr);
   gap: 8px;
   padding: 8px;
   overflow: hidden;
@@ -222,11 +223,22 @@ html, body {
 #row-resizer:active {
   background: linear-gradient(90deg, transparent, #6aa9ff 25%, #6aa9ff 75%, transparent);
 }
+/* splitter between two views of a row (app.ts: mountColumnSplitters sets the columns) */
+.view-col-resizer {
+  cursor: col-resize;
+  border-radius: 4px;
+  background: linear-gradient(to bottom, transparent, #3a3a3a 25%, #3a3a3a 75%, transparent);
+}
+.view-col-resizer:hover,
+.view-col-resizer:active {
+  background: linear-gradient(to bottom, transparent, #6aa9ff 25%, #6aa9ff 75%, transparent);
+}
 
 .view {
   position: relative;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
   border: 1px solid var(--line);
   border-radius: 6px;

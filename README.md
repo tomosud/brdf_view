@@ -51,6 +51,7 @@ https://rgl.epfl.ch/materials
 2. `Open BRDF...` から `.brdf` / `.binary` / `.bsdf` ファイルを選びます。
 3. サンプルを試す場合は `Load sample Brdf` を押して一覧から選びます。
 4. 左側のパラメータで表示する BRDF を選び、値を調整します。
+5. ビューの大きさは、仕切りをドラッグして変えられます。上段と下段の間の仕切りは、片方の段をタイトルだけになるまで縮められます。同じ段のビューの間にも仕切りがあり、たとえば Lit Object だけを大きくできます。大きさはブラウザに保存され、仕切りのダブルクリックで元に戻ります。
 
 ## 状態の共有と自動操作（URL / JS API / コマンドライン）
 
@@ -70,6 +71,7 @@ capture.bat --batch jobs.json
 
 - 操作部品には `data-testid`（例 `param-roughness`、`view-litObject`、`ctl-exposure`）と `aria-label` を付けています。
 - Lit Object に `IBL` のチェックを追加しました。外すと HDRI の代わりに、Incident θ/φ からの平行光 1 つで照らします。
+- Lit Object の `Env rot` は、IBL の環境を縦軸まわりに回します（度、-180〜180）。背景と照明の両方が回ります。状態のキーは `litObject.envRotation`。
 - Lit Object の `Occlusion` は、モデル自身による環境光の遮蔽を IBL に反映します（鼻の穴、眼窩、耳の内側、顎の下など）。`Off` / `SH` / `Ray` から選びます（既定 `SH`）。どれも遮る光を減らすだけで相互反射は含まず、平行光（IBL オフ）には効きません。凸形状（球）の見た目はどれでも変わりません。
   - `SH`: モデルの読み込み時に、頂点ごとに方向別の遮蔽を球面調和関数（l ≤ 3、16 係数）として GPU で事前計算します。軽いですが低次の近似なので、くっきりした影は出ません。
   - `Ray`: サンプルごとにモデルへ影のレイを飛ばして正確に判定します（初めて選んだときに、BVH をバックグラウンドで作ります。25 万頂点で約 1 秒）。接するところの影もくっきり出ますが重く、GPU のタイムアウトを避けるため 1 フレームのサンプル数を減らして描くので、全部（512 回分）を積算すると数十秒かかります。カメラを動かしている間は `SH` で描き、離すと `Ray` で積算し直します。モデルは閉じていて法線が外を向いている前提で、レイが裏側から当たる面は遮蔽として数えません。
@@ -92,16 +94,27 @@ capture.bat --batch jobs.json
 - 画像は共有 URL や状態 JSON には入りません（状態 JSON には、ファイル名・チャンネル・色空間などが参考として出ます）。別の PC やブラウザにリンクを渡しても、画像は付きません。
 - スクリプトからは `brdfView.setTexture('roughness', url, { channel: 'g' })`・`brdfView.setNormalMap(url)`、コマンドラインからは `--texture roughness:g=orm.png`・`--normal-map normal.png`。
 
+### モデルに付属するテクスチャ（`Model tex`）
+
+頭部モデル `dm` には、ノーマルマップ・ベースカラー・ラフネス（MRAO の G）のテクスチャが付属しています（`assets/obj/textures/`、2048²）。Lit Object で `dm` を選ぶと、表示中の BRDF に自動で貼られます（`Model tex`、既定オン）。
+
+- ノーマルマップはどの BRDF にも貼ります。ベースカラーとラフネスは、BRDF が対応する名前のパラメータ（`base_color` / `baseColor` / `albedo` / `diffuse_albedo` / `diffuse_color`、`roughness` / `specular_roughness`）を持つときだけ貼ります
+- すでに画像が貼ってある所には貼りません（自分で貼った画像が優先）
+- 左のパネルで外したり、別の画像に替えたりすると、そのままになります。モデルを選び直すと、もう一度貼られます
+- 別のモデルに替えると外れます。`Model tex` を外すと、貼らなくなります（状態のキー `litObject.modelTextures`）
+- IndexedDB には保存しません（モデルと一緒に戻るため）
+- 別のモデルにテクスチャを付けるには、`assets/obj/textures.json` に項目を足し、画像を `assets/obj/textures/` に置きます
+
 ## 疑似 SSS（Lit Object）
 
-Lit Object の `SSS` をオンにすると、拡散光だけを画面上でぼかす表面下散乱を足します（既定はオフ）。**独自実装・近似**で、特定のエンジンやゲームの実装そのものではありません。詳しくは [docs/pseudo_sss.md](docs/pseudo_sss.md)。
+Lit Object の `SSS`（既定オン）は、拡散光だけを画面上でぼかす表面下散乱を足します。**独自実装・近似**で、特定のエンジンやゲームの実装そのものではありません。詳しくは [docs/pseudo_sss.md](docs/pseudo_sss.md)。
 
-- 使えるのは、対応する `.brdf`（`BRDF_sss_diffuse` という関数を持つもの）だけです。今は `callisto_brdf.brdf` と派生プリセット。非対応の `.brdf` では `SSS` が灰色になります
+- 処理されるのは、対応する `.brdf`（`BRDF_sss_diffuse` という関数を持つもの）だけです。今は `callisto_brdf.brdf` と派生プリセット。非対応の `.brdf` では `SSS` が灰色になり、チェックの状態に関係なく通常の描画になります
 - 散乱の距離は cm で決まります。`Size (cm)` にモデルの最大の辺の実寸を入れます（頭部モデル `dm` は 30.17、ほかは 20 が既定）
 - 調整は `sss_` で始まるパラメータ（強さ、届く距離、色ごとの広がり、混ぜる割合）
 - 効くのは mm 単位の陰影（ノーマルマップの凹凸、鼻・唇・耳の際、影の縁）です。肌の値では、頭の大きさの球の明暗境界はほとんど変わりません。影の縁を見るなら `IBL` オン + `Occlusion` = `Ray`
 - プロット、Image Slice、Lit Sphere、`evaluate()` には入りません
-- 状態のキーは `litObject.sss`（真偽）と `litObject.sizeCm`。例: `capture.bat --brdf callisto_skin_jacob.brdf --opt litObject.object=dm.obj --opt litObject.sss=true --view litObject --out head.png`
+- 状態のキーは `litObject.sss`（真偽、既定 `true`）と `litObject.sizeCm`。SSS なし・テクスチャなしの素のモデルを撮る例: `capture.bat --brdf callisto_skin_jacob.brdf --opt litObject.object=dm.obj --opt litObject.sss=false --opt litObject.modelTextures=false --view litObject --out head.png`
 
 ## パラメータのコメント（ツールチップ）
 
@@ -123,7 +136,7 @@ float roughness 0.02 1.0 0.5  # ラフネス（下限 0.02） / roughness (clamp
 | `sample/brdf/unreal_legacy_pbr.brdf` | **独自実装**。Unreal legacy Default Lit のローカルBRDF近似です。 |
 | `sample/brdf/openpbr.brdf` | **独自実装**。OpenPBR風の不透明反射近似で、元の参照実装そのものではありません。 |
 | `sample/brdf/substrate.brdf` | **独自実装**。Unreal Substrate Slab のローカルdirect lighting近似です。画面上の `second_roughness_as_clearcoat（custom）` は元実装にない独自拡張です。 |
-| `sample/brdf/callisto_brdf.brdf` | **独自実装・近似**。The Callisto Protocol の Callisto BRDF（UE4 SubsurfaceProfile 拡張）を、出荷データとGPUキャプチャから再構成したローカルBRDFです。Dual Normal・Glazing Blur・透過は含みません。SSS は BRDF には含まず、Lit Object の疑似 SSS（上の節。独自実装・近似、既定はオフ）で足せます。詳細は [callisto_brdf reproduction status](docs/callisto_brdf_reproduction.md)。 |
+| `sample/brdf/callisto_brdf.brdf` | **独自実装・近似**。The Callisto Protocol の Callisto BRDF（UE4 SubsurfaceProfile 拡張）を、出荷データとGPUキャプチャから再構成したローカルBRDFです。Dual Normal・Glazing Blur・透過は含みません。SSS は BRDF には含まず、Lit Object の疑似 SSS（上の節。独自実装・近似、既定はオン）で足されます。詳細は [callisto_brdf reproduction status](docs/callisto_brdf_reproduction.md)。 |
 | `sample/brdf/brdf_slice_guide.brdf` | **独自の説明用（物理的な BRDF ではない）**。Image Slice（横 θh・縦 θd）のどの領域が何を表すかを色分けで示します。白 = スペキュラのピーク（左端）、マゼンタ = グレージングのフレネル（左上）、赤 = 再帰反射（右下）、黄 = カメラと同じ方向からの照明（下端、L ≒ V）、青 = 光が地平線付近（N·L→0）、シアン = 視線が地平線付近（N·V→0）、暗赤 = 地平線より下（本来は 0）。領域ごとに `show_*`（表示の切り替え）と `*_color`（色見本＝凡例。変えても Defaults で戻る）を持ちます。 |
 | `sample/brdf/callisto_skin_jacob.brdf` ほか `callisto_skin_generic` / `callisto_eye` / `callisto_teeth` / `callisto_cloth_prisoner` | **派生プリセット**。`callisto_brdf.brdf` と同じシェーダで、初期値だけを素材ごとの出荷値にしたもの。`scripts/gen_callisto_presets.py` で生成（手で編集しない）。将来はビューアのプリセット機能に置き換える予定です。 |
 
@@ -179,6 +192,11 @@ npm run build
 `web/public/obj`、`web/dist` は生成物として
 gitignore しています。HDRI を追加する場合は `assets/` に置いて commit し、
 `npm run build` で `web/dist` に反映されることを確認してください。
+
+HDRI は Radiance の `.hdr`（equirectangular、1k 程度）で置きます。アプリが読めるのは `.hdr` だけなので、
+OpenEXR の `.exr` は変換してから置いてください（例: OpenImageIO の
+`oiiotool in.exr --ch R,G,B -o out.hdr`。Houdini 付属の `hoiiotool` でも同じ）。
+`*_1k.hdr` という名前のものは [Poly Haven](https://polyhaven.com/hdris) の HDRI（CC0）です。
 
 GitHub Pages と同じ `/brdf_view/` prefix でローカル確認する場合:
 

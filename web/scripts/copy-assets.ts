@@ -222,11 +222,15 @@ const measured = copyByExt(join(repoRoot, 'sample', 'brdf'), join(publicRoot, 'm
 const envs = copyByExt(join(repoRoot, 'assets'), join(publicRoot, 'environments'), ['.hdr', '.exr']);
 const envThumbs = generateEnvironmentThumbnails(join(repoRoot, 'assets'), join(publicRoot, 'environment-thumbs'));
 const objs = copyByExt(join(repoRoot, 'assets', 'obj'), join(publicRoot, 'obj'), ['.obj']);
+// Default textures of the meshes (src/views/model-textures.ts): the manifest and the images it names.
+const objTextures =
+  copyByExt(join(repoRoot, 'assets', 'obj', 'textures'), join(publicRoot, 'obj', 'textures'), ['.webp', '.png', '.jpg', '.jpeg']) +
+  copyFiles(join(repoRoot, 'assets', 'obj'), join(publicRoot, 'obj'), ['textures.json']);
 
 writeManifest(join(publicRoot, 'brdfs'), 'index.json', listByExt(join(publicRoot, 'brdfs'), ['.brdf']));
 writeManifest(join(publicRoot, 'environments'), 'index.json', listByExt(join(publicRoot, 'environments'), ['.hdr', '.exr']));
 writeManifest(join(publicRoot, 'obj'), 'index.json', listByExt(join(publicRoot, 'obj'), ['.obj']));
 
 console.log(
-  `[copy-assets] copied ${brdfs} .brdf, ${licenses} license/readme, ${measured} measured .binary, ${envs} environment, ${envThumbs} environment thumbnail, ${objs} obj file(s).`,
+  `[copy-assets] copied ${brdfs} .brdf, ${licenses} license/readme, ${measured} measured .binary, ${envs} environment, ${envThumbs} environment thumbnail, ${objs} obj, ${objTextures} obj texture file(s).`,
 );

@@ -32,7 +32,7 @@ Last updated: 2026-10-01
 | GGX の面光源正規化 | UE の Sphere/Rect ライト向けエネルギー正規化 | 点光源の D_GGX | 代替 |
 | Dual Normal | 拡散とスペキュラに別の法線（shading model 13） | 法線 1 本 | 省略 |
 | Specular Glazing Blur | ライトの冒頭で、近傍画素のスペキュラ法線と影を確率的に借りる | なし（画面空間処理のため） | 省略 |
-| SSS（散乱） | 画面空間の Separable SSS（ガウスの和。Burley ではない）。拡散光だけを、プロファイルの ScatterRadius・FalloffColor・SubsurfaceColor でぼかす | `BRDF()` には無い。Lit Object の疑似 SSS（`SSS` をオン、既定はオフ）が同じ考え方でぼかす。値は `sss_*` パラメータ。[pseudo_sss.md](pseudo_sss.md) | 代替（独自実装・近似。Lit Object のみ） |
+| SSS（散乱） | 画面空間の Separable SSS（ガウスの和。Burley ではない）。拡散光だけを、プロファイルの ScatterRadius・FalloffColor・SubsurfaceColor でぼかす | `BRDF()` には無い。Lit Object の疑似 SSS（`SSS`、既定はオン）が同じ考え方でぼかす。値は `sss_*` パラメータ。[pseudo_sss.md](pseudo_sss.md) | 代替（独自実装・近似。Lit Object のみ） |
 | 透過・境界の色にじみ | 裏から抜ける光、別のプロファイルとの境界でのにじみ | なし | 省略 |
 | SSP テクスチャ・GBuffer の符号化 | 列 3.zw / 6〜8、÷10 格納、プロファイル ID | なし（パラメータを直接持つ） | 省略 |
 | Eye モデル | 虹彩法線・角膜（Callisto 項は Eye にも入る） | なし | 省略 |

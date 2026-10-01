@@ -10,6 +10,8 @@ uniform vec3 camUp;
 uniform float envIntensity;
 uniform float hideBackground;
 uniform float grayscaleIBL;
+// Rotation of the environment about +y, in radians (same as iblObject.frag).
+uniform float envRotation;
 
 in vec2 v_ndc;
 out vec4 fragColor;
@@ -18,7 +20,7 @@ const float PI = 3.14159265358979;
 
 vec2 dirToUV(vec3 d)
 {
-    float u = 0.5 + atan(d.z, d.x) / (2.0 * PI);
+    float u = 0.5 + (atan(d.z, d.x) - envRotation) / (2.0 * PI);
     float v = 0.5 - asin(clamp(d.y, -1.0, 1.0)) / PI;
     return vec2(u, v);
 }

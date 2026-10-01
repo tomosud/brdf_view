@@ -4,7 +4,7 @@ Last updated: 2026-10-01
 
 **独自実装・近似**。Lit Object に、拡散光だけを画面上でぼかす表面下散乱（SSS）を足す機能です。特定のエンジンやゲームの実装そのものではありません。
 
-- 既定はオフ。Lit Object の `SSS` をオンにしたときだけ動く
+- 既定はオン（Lit Object の `SSS`）。ただし処理されるのは、対応する `.brdf` を表示しているときだけ
 - 対応する `.brdf`（下の「`.brdf` 側の約束」のフック関数を持つもの）でだけ使える。今は `callisto_brdf.brdf` と派生プリセット 5 本
 - プロット、Image Slice、Lit Sphere、`evaluate()` には入らない（1 点の BRDF の値は変わらない）
 
@@ -13,13 +13,13 @@ Last updated: 2026-10-01
 ## 使い方
 
 1. 対応する `.brdf` を読み込む（例 `callisto_skin_jacob.brdf`）
-2. Lit Object の `SSS` にチェックを入れる
+2. Lit Object の `SSS` にチェックが入っていることを確かめる（既定で入っている。比べるときはここで切り替える）
 3. `Size (cm)` に、モデルの最大の辺の実寸を入れる。散乱の距離は cm で決まるので、モデルが大きいほど、画面上の広がりは小さくなる
 4. 左のパネルの `sss_` で始まるパラメータで調整する
 
 | 操作部品・キー | 内容 |
 | --- | --- |
-| `SSS`（`litObject.sss`、`data-testid="ctl-sss"`） | オン・オフ。既定はオフ。非対応の `.brdf` では灰色になり、オンでも通常の描画になる |
+| `SSS`（`litObject.sss`、`data-testid="ctl-sss"`） | オン・オフ。既定はオン。非対応の `.brdf` では灰色になり、オンでも通常の描画になる |
 | `Size (cm)`（`litObject.sizeCm`、`ctl-size-cm`） | モデルの最大の辺の実寸（cm）。モデルを読み込むと、そのモデルの既定値に戻る。`dm` は OBJ が cm 単位なので 30.17、ほかは 20 |
 | `sss_strength` | 散乱の強さ。散乱の距離に掛かる（0 で散乱なし） |
 | `sss_scatter_radius` | 散乱が届く距離（cm） |
@@ -28,10 +28,10 @@ Last updated: 2026-10-01
 
 ```bat
 rem 頭部モデルを、SSS あり・遮蔽のレイトレースありで撮る
-capture.bat --brdf callisto_skin_jacob.brdf --opt litObject.object=dm.obj --opt litObject.sss=true --opt litObject.occlusion=ray --view litObject --frames 128 --out head_sss.png
+capture.bat --brdf callisto_skin_jacob.brdf --opt litObject.object=dm.obj --opt litObject.occlusion=ray --view litObject --frames 128 --out head_sss.png
 
 rem 球の直径を 3 cm として、平行光で撮る
-capture.bat --brdf callisto_skin_jacob.brdf --light 90,0 --opt litObject.ibl=false --opt plot.nDotL=true --opt litObject.sss=true --opt litObject.sizeCm=3 --view litObject --out sphere_sss.png
+capture.bat --brdf callisto_skin_jacob.brdf --light 90,0 --opt litObject.ibl=false --opt plot.nDotL=true --opt litObject.sizeCm=3 --view litObject --out sphere_sss.png
 ```
 
 ### 見え方の目安
@@ -156,7 +156,7 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
 
 オン・オフと取り外し:
 
-- 実行時: `litObject.sss`（既定 `false`）。オフなら `SssPipeline` は作られない
+- 実行時: `litObject.sss`（既定 `true`）。オフ、または非対応の `.brdf` なら `SssPipeline` は作られない
 - `.brdf` 単位: フック関数を消せば、その `.brdf` は非対応になる
 - 機能ごと外す: `lit-object.ts` の `activeSss()` が常に `null` を返すようにすれば、残りのコードは通らない
 

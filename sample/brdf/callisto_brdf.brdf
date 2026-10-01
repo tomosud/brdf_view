@@ -20,7 +20,7 @@ analytic
 # Returns the BRDF value without the NoL factor, like the other samples.
 #
 # Subsurface scattering is not part of BRDF(). The viewer's pseudo SSS (Lit Object,
-# "SSS" checkbox, off by default; a custom screen-space approximation, see
+# "SSS" checkbox, on by default; a custom screen-space approximation, see
 # docs/pseudo_sss.md) uses the two hook functions BRDF_sss_diffuse / BRDF_sss_albedo
 # below and the sss_* parameters (profile ScatterRadius, FalloffColor, SubsurfaceColor).
 # The plots, Image Slice, Lit Sphere and evaluate() never include it.

@@ -30,6 +30,8 @@ uniform float renderWithIBL;
 uniform float envIntensity;
 uniform float grayscaleIBL;
 uniform float envTotalWeight;
+// Rotation of the environment about +y, in radians (Lit Object "Env rot").
+uniform float envRotation;
 uniform int numSamples;
 uniform int frameIndex;
 // Tangent-space normal map (OpenGL convention; normalFlipY = -1 for DirectX maps).
@@ -73,14 +75,14 @@ const float kPI = 3.14159265358979;
 
 vec2 dirToUV(vec3 d)
 {
-    float u = 0.5 + atan(d.z, d.x) / (2.0 * kPI);
+    float u = 0.5 + (atan(d.z, d.x) - envRotation) / (2.0 * kPI);
     float v = 0.5 - asin(clamp(d.y, -1.0, 1.0)) / kPI;
     return vec2(u, v);
 }
 
 vec3 uvToDir(vec2 uv)
 {
-    float phi = (uv.x - 0.5) * (2.0 * kPI);
+    float phi = (uv.x - 0.5) * (2.0 * kPI) + envRotation;
     float y = sin((0.5 - uv.y) * kPI);
     float r = sqrt(max(0.0, 1.0 - y * y));
     return vec3(cos(phi) * r, y, sin(phi) * r);
