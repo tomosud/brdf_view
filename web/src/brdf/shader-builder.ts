@@ -13,16 +13,51 @@
 // WebGL2 rejects redeclaring them even though the original desktop path accepted
 // some of these samples.
 
-import type { BrdfDef, ParamDef } from './types.js';
+import type { BrdfDef, ParamDef, TextureChannel } from './types.js';
+
+/** How one textured parameter is read in the shader (see textureFetches). */
+export interface TextureBinding {
+  name: string;
+  channel: TextureChannel;
+  convert: 'none' | 'toLinear' | 'toSrgb';
+}
 import { MITER_GLSL } from '../gl/line-expansion.js';
 
-export function uniformDecls(params: ParamDef[]): string {
+export function uniformDecls(params: ParamDef[], bindings: readonly TextureBinding[] = []): string {
+  const textured = new Set(bindings.map((b) => b.name));
   const out: string[] = [];
-  // Order mirrors the original: floats, then bools, then colors.
-  for (const p of params) if (p.kind === 'float') out.push(`uniform float ${p.name};`);
+  // Order mirrors the original: floats, then bools, then colors. A textured
+  // parameter becomes a sampler plus a plain global of the same name, filled
+  // per pixel by ::INSERT_TEXTURE_FETCH_HERE:: (so the .brdf body is unchanged).
+  const decl = (type: string, name: string) =>
+    textured.has(name) ? `uniform sampler2D ${textureUniform(name)};\n${type} ${name};` : `uniform ${type} ${name};`;
+  for (const p of params) if (p.kind === 'float') out.push(decl('float', p.name));
   for (const p of params) if (p.kind === 'bool') out.push(`uniform bool ${p.name};`);
-  for (const p of params) if (p.kind === 'color') out.push(`uniform vec3 ${p.name};`);
+  for (const p of params) if (p.kind === 'color') out.push(decl('vec3', p.name));
+  if (bindings.length) out.push(TEXTURE_HELPERS);
   return out.join('\n');
+}
+
+const TEXTURE_HELPERS = `vec3 brdfTexSrgbToLinear(vec3 c) { c = max(c, vec3(0.0)); return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
+vec3 brdfTexLinearToSrgb(vec3 c) { c = max(c, vec3(0.0)); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }`;
+
+/** Sampler uniform name for a textured parameter. */
+export function textureUniform(name: string): string {
+  return `brdfTex_${name}`;
+}
+
+function textureFetches(params: ParamDef[], bindings: readonly TextureBinding[]): string {
+  const out: string[] = [];
+  for (const b of bindings) {
+    const p = params.find((x) => x.name === b.name);
+    if (!p || p.kind === 'bool') continue;
+    const sample = `texture(${textureUniform(b.name)}, vUV)`;
+    const rgb = p.kind === 'color' ? `${sample}.rgb` : `vec3(${sample}.${b.channel === 'rgb' ? 'r' : b.channel})`;
+    const conv =
+      b.convert === 'toLinear' ? `brdfTexSrgbToLinear(${rgb})` : b.convert === 'toSrgb' ? `brdfTexLinearToSrgb(${rgb})` : rgb;
+    out.push(`${b.name} = ${p.kind === 'color' ? conv : `(${conv}).x`};`);
+  }
+  return out.join('\n    ');
 }
 
 /**
@@ -65,8 +100,12 @@ export function escapeBuiltinFunctionRedeclarations(src: string): string {
   return out;
 }
 
-export function injectTemplate(template: string, def: BrdfDef): string {
-  const uniforms = uniformDecls(def.params);
+/**
+ * `bindings` (Lit Object only): parameters read from images. The template must
+ * then provide `in vec2 vUV` and the ::INSERT_TEXTURE_FETCH_HERE:: marker.
+ */
+export function injectTemplate(template: string, def: BrdfDef, bindings: readonly TextureBinding[] = []): string {
+  const uniforms = uniformDecls(def.params, bindings);
   const compat = (s: string) => escapeBuiltinFunctionRedeclarations(s);
   const promote = (s: string) => (def.noPromote ? compat(s) : promoteIntLiterals(compat(s)));
   const brdf = `\n${promote(def.shaderSource)}\n`;
@@ -79,7 +118,9 @@ export function injectTemplate(template: string, def: BrdfDef): string {
     .split('::INSERT_IS_FUNCTION_HERE::')
     .join(isFunc)
     .split('::INSERT_MITER_HERE::')
-    .join(MITER_GLSL);
+    .join(MITER_GLSL)
+    .split('::INSERT_TEXTURE_FETCH_HERE::')
+    .join(textureFetches(def.params, bindings));
 }
 
 const templateCache = new Map<string, Promise<string>>();

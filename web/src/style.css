@@ -86,6 +86,67 @@ html, body {
   border-radius: 4px;
 }
 .toolbar-select[hidden] { display: none; }
+.texture-drop-target {
+  outline: 2px dashed #8dbdff;
+  outline-offset: 1px;
+}
+.param-texture {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px 12px;
+  font-size: 11px;
+  color: #b8d5ff;
+}
+.param-texture img {
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+.param-texture-select,
+.param-texture-strength {
+  padding: 1px 2px;
+  font-size: 11px;
+  color: var(--text);
+  background: #333;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.param-texture-strength { width: 44px; }
+.param-texture-flag {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.normal-map-hint {
+  font-size: 11px;
+  color: #888;
+}
+.texture-channel-chooser {
+  position: fixed;
+  z-index: 50;
+  padding: 6px 8px;
+  background: #2a2a2a;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  font-size: 11px;
+  color: var(--text);
+}
+.texture-channel-title { margin-bottom: 4px; }
+.texture-channel-buttons {
+  display: flex;
+  gap: 4px;
+}
+.param-texture-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .state-panel {
   display: flex;
   flex-direction: column;

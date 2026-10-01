@@ -3,7 +3,7 @@
 // The package selector reproduces ParameterWindow::emitBRDFListChanged /
 // getBRDFList (solo, solo-colors, channel -> colorMask).
 
-import type { BrdfInstance, ParamValue } from '../brdf/types.js';
+import type { BrdfInstance, NormalMap, ParamTexture, ParamValue } from '../brdf/types.js';
 
 export type Channel = 'red' | 'green' | 'blue' | 'luminance';
 
@@ -102,6 +102,9 @@ export class Store {
   }
 
   removeBrdf(id: string): void {
+    const removed = this.state.brdfs.find((b) => b.id === id);
+    for (const t of removed?.textures?.values() ?? []) URL.revokeObjectURL(t.url);
+    if (removed?.normalMap) URL.revokeObjectURL(removed.normalMap.url);
     const wasVisible = this.state.brdfs.some((b) => b.id === id && b.visible);
     this.state.brdfs = this.state.brdfs.filter((b) => b.id !== id);
     this.state.drawColors.delete(id);
@@ -125,6 +128,27 @@ export class Store {
       b.values.set(name, value);
       this.emit();
     }
+  }
+
+  /** Attach (or with null, remove) an image for one parameter (Lit Object only). */
+  setParamTexture(id: string, name: string, texture: ParamTexture | null): void {
+    const b = this.state.brdfs.find((x) => x.id === id);
+    if (!b) return;
+    const old = b.textures?.get(name);
+    if (old && old.url !== texture?.url) URL.revokeObjectURL(old.url);
+    if (texture) (b.textures ??= new Map()).set(name, texture);
+    else b.textures?.delete(name);
+    this.emit();
+  }
+
+  /** Attach (or with null, remove) the BRDF's normal map (Lit Object only). */
+  setNormalMap(id: string, normalMap: NormalMap | null): void {
+    const b = this.state.brdfs.find((x) => x.id === id);
+    if (!b) return;
+    if (b.normalMap && b.normalMap.url !== normalMap?.url) URL.revokeObjectURL(b.normalMap.url);
+    if (normalMap) b.normalMap = normalMap;
+    else delete b.normalMap;
+    this.emit();
   }
 
   resetParams(id: string): void {

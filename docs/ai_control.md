@@ -68,6 +68,7 @@ https://tomosud.github.io/brdf_view/#v=1&brdfs.0.file=callisto_brdf.brdf&brdfs.0
 - URL に入るのは**表示中の BRDF だけ**。非表示で読み込んでいる BRDF は入らない
 - アドレスバーは操作のたびに（約 0.4 秒ごとに確認して）書き換える。`history.replaceState` を使うので、履歴は増えず、再読み込みも状態の再適用も起きない
 - 表示中の BRDF が外部のもの（自分で開いた `.brdf`、MERL / RGL の測定データ）のときは、アドレスバーを書き換えない。Copy link は使える（手元の `.brdf` は本文を圧縮して入れる。測定データは入らない）
+- 表示中の BRDF に画像（パラメータのテクスチャ、ノーマルマップ）を貼っている間も、アドレスバーを書き換えない（画像は URL に入らない。状態 JSON の `brdfs[].textures` / `brdfs[].normalMap` に、ファイル名・チャンネル・色空間などが参考として出る）
 - アドレスバーに URL を打ち込む・貼り付けると、ページを読み直さずにその状態をすぐ適用する。書いたキーだけが変わり、そのあと URL は完全な形に書き直される
 - 起動時は、URL に状態があれば IndexedDB の前回セッションより URL を優先する。アドレスバーは常に今の状態なので、再読み込みしても同じ表示に戻る。ただし非表示の BRDF は URL に入らないので、再読み込みで一覧から消える
 
@@ -84,6 +85,8 @@ https://tomosud.github.io/brdf_view/#v=1&brdfs.0.file=callisto_brdf.brdf&brdfs.0
 | `listBrdfs()` | `{ available: [同梱ファイル名], loaded: [{ index, name, file, kind, visible, active }] }` |
 | `listParams(brdf?)` | `[{ name, kind, min?, max?, default, value, description }]`。`description` は `.brdf` のコメント |
 | `setParam(name, value, brdf?)` | パラメータを 1 つ変える。色は `[r,g,b]` か `"r,g,b"` |
+| `setTexture(name, src, { brdf, fileName, channel, colorSpace })` | float / color のパラメータに画像を貼る（Lit Object のみ、メッシュの UV で貼る）。`src` は URL か data URL、`null` で外す。`channel` は float 用で `r` / `g` / `b` / `a`（既定 `r`。color は常に RGB）。`colorSpace` は画像の色空間 `srgb` / `linear`（既定: base color は `srgb`、それ以外は `linear`）。値は `.brdf` が期待する形に直す（color は sRGB の値、float はリニアの値）。状態や URL には入らない |
+| `setNormalMap(src, { brdf, fileName, flipY, strength })` | BRDF にタンジェント空間のノーマルマップを貼る（Lit Object のみ。既定は DirectX 形式 `flipY: true`、OpenGL 形式なら `flipY: false`。`strength` は XY の倍率、既定 1）。`null` で外す |
 | `listViews()` | `{ views, dataViews, environments, objects }` |
 | `render(view, { width, height, frames, supersample, background })` | PNG の data URL（表示用の画像。露出・ガンマ込み）。指定サイズで 1 回だけ描く（DPR・ウィンドウの大きさに依存しない。UI は写らない）。`litObject` の IBL は `frames` 回（既定 512 = 画面で収束する回数）積算してから返す。`supersample: n`（1〜8、既定 1）で n 倍の大きさに描いてリニアで縮小する（アンチエイリアス）。`background` は `'view'`（既定、ビュー本来の背景）、`'transparent'`（アルファ付き）、sRGB の `[r, g, b]`（`litObject` / `litSphere` のみ） |
 | `evaluate(input, { brdf, params })` | BRDF の生の値（RGB）。`input` は `{ L, V, N?, X?, Y? }`（ベクトル）か `{ thetaL, phiL, thetaV, phiV }`（度。N/X/Y 基準）。配列を渡すと配列で返す。`params` は一時的な上書きで、状態は変えない |
@@ -151,6 +154,8 @@ capture.bat --brdf callisto_brdf.brdf --set roughness=0.3 --save-state state.jso
 | オプション | 内容 |
 | --- | --- |
 | `--url` / `--state` / `--brdf` / `--set` / `--light` / `--opt` | 状態の指定。この順に適用する |
+| `--texture 名前[:チャンネル][:色空間]=画像` | パラメータに画像を貼る（Lit Object、複数可）。例 `base_color=albedo.png`、`roughness:g=orm.png`、`roughness:r:srgb=rough.png`。バッチでは `"texture": { "base_color": "albedo.png", "roughness": { "file": "orm.png", "channel": "g" } }` |
+| `--normal-map` / `--normal-gl` / `--normal-strength` | ノーマルマップ（Lit Object）。既定は DirectX 形式、`--normal-gl` で OpenGL 形式。バッチでは `normalMap` / `normalFlipY`（既定 true）/ `normalStrength` |
 | `--view` / `--out` | 撮るビュー（複数可、`page` は画面全体）と PNG の保存先 |
 | `--width` / `--height` | 画像のサイズ（既定 512×512。`page` はウィンドウの大きさ、既定 1600×1000） |
 | `--frames` | `litObject` の IBL の積算回数（既定 512） |

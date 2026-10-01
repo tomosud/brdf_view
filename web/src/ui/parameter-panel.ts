@@ -4,8 +4,17 @@
 
 import { floatControl, boolControl, colorControl, selectControl } from './controls.js';
 import type { Channel, Store } from '../state/store.js';
-import type { BrdfDef, BrdfInstance, ParamDef } from '../brdf/types.js';
+import type {
+  BrdfDef,
+  BrdfInstance,
+  ParamDef,
+  ParamTexture,
+  TextureChannel,
+  TextureColorSpace,
+  TextureImage,
+} from '../brdf/types.js';
 import { splitCustomImplementationName } from '../brdf/loader.js';
+import { defaultColorSpace, loadTextureImage } from '../brdf/param-texture.js';
 
 export function mountParameterPanel(root: HTMLElement, store: Store): void {
   const render = () => {
@@ -128,13 +137,235 @@ function brdfSection(store: Store, id: string): HTMLElement {
 
   if (!inst.visible) return s;
 
+  if (isShaderBrdf(inst.def)) s.append(...normalMapRows(store, id, inst));
+
   for (const p of inst.def.params) {
     const row = paramControl(store, id, inst, p);
     row.dataset.testid = `param-${p.name}`;
     row.dataset.param = p.name;
     s.append(row);
+    if (p.kind !== 'bool') {
+      onImageDrop(row, async (file) => {
+        const img = await loadTextureImage(file, file.name);
+        const colorSpace = defaultColorSpace(p.name);
+        if (p.kind === 'color') {
+          store.setParamTexture(id, p.name, { ...img, channel: 'rgb', colorSpace });
+          return;
+        }
+        const channel = await chooseChannel(row, p.name, img);
+        if (channel) store.setParamTexture(id, p.name, { ...img, channel, colorSpace });
+        else URL.revokeObjectURL(img.url);
+      });
+      const tex = inst.textures?.get(p.name);
+      if (tex) s.append(textureBadge(store, id, p, tex));
+    }
   }
   return s;
+}
+
+/** Calls `handle` with an image file dropped on `target` (errors are shown in an alert). */
+function onImageDrop(target: HTMLElement, handle: (file: File) => Promise<void>): void {
+  const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  target.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = 'copy';
+    target.classList.add('texture-drop-target');
+  });
+  target.addEventListener('dragleave', () => target.classList.remove('texture-drop-target'));
+  target.addEventListener('drop', async (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    target.classList.remove('texture-drop-target');
+    const file = e.dataTransfer!.files[0];
+    if (!file) return;
+    try {
+      await handle(file);
+    } catch (err) {
+      window.alert((err as Error).message);
+    }
+  });
+}
+
+const CHANNELS: { value: TextureChannel; text: string }[] = [
+  { value: 'r', text: 'R' },
+  { value: 'g', text: 'G' },
+  { value: 'b', text: 'B' },
+  { value: 'a', text: 'A' },
+];
+
+/** Ask which channel of the dropped image feeds a float parameter. Resolves null on cancel. */
+function chooseChannel(anchor: HTMLElement, name: string, img: TextureImage): Promise<TextureChannel | null> {
+  document.querySelector('.texture-channel-chooser')?.remove();
+  return new Promise((resolve) => {
+    const box = document.createElement('div');
+    box.className = 'texture-channel-chooser';
+    box.dataset.testid = 'texture-channel-chooser';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', `Channel of ${img.fileName} for ${name}`);
+    const title = document.createElement('div');
+    title.className = 'texture-channel-title';
+    title.textContent = `${name} ← ${img.fileName}: channel`;
+    const buttons = document.createElement('div');
+    buttons.className = 'texture-channel-buttons';
+    const done = (v: TextureChannel | null) => {
+      document.removeEventListener('keydown', onKey);
+      box.remove();
+      resolve(v);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') done(null);
+      const c = CHANNELS.find((x) => x.text === e.key.toUpperCase());
+      if (c) done(c.value);
+    };
+    for (const c of CHANNELS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn btn-compact';
+      b.textContent = c.text;
+      b.dataset.channel = c.value;
+      b.addEventListener('click', () => done(c.value));
+      buttons.append(b);
+    }
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn btn-compact';
+    cancel.textContent = 'Cancel';
+    cancel.dataset.channel = 'cancel';
+    cancel.addEventListener('click', () => done(null));
+    buttons.append(cancel);
+    box.append(title, buttons);
+    document.body.append(box);
+    const r = anchor.getBoundingClientRect();
+    box.style.left = `${Math.max(8, r.left)}px`;
+    box.style.top = `${Math.min(window.innerHeight - 80, r.bottom + 2)}px`;
+    document.addEventListener('keydown', onKey);
+    (buttons.firstElementChild as HTMLButtonElement).focus();
+  });
+}
+
+function textureBadge(store: Store, id: string, p: ParamDef, tex: ParamTexture): HTMLElement {
+  const name = p.name;
+  const badge = imageBadge(tex, `param-texture-${name}`, `Remove the image from ${name}`, () => store.setParamTexture(id, name, null));
+  badge.title = `${name}: ${tex.fileName} (${tex.width}×${tex.height}). Used per pixel in Lit Object; the slider value is still used by the plots.`;
+  const controls: HTMLElement[] = [];
+  if (p.kind === 'float') {
+    controls.push(
+      miniSelect('channel', CHANNELS, tex.channel === 'rgb' ? 'r' : tex.channel, (v) =>
+        store.setParamTexture(id, name, { ...tex, channel: v as TextureChannel }),
+      ),
+    );
+  }
+  controls.push(
+    miniSelect(
+      'color-space',
+      [
+        { value: 'srgb', text: 'sRGB' },
+        { value: 'linear', text: 'Linear' },
+      ],
+      tex.colorSpace,
+      (v) => store.setParamTexture(id, name, { ...tex, colorSpace: v as TextureColorSpace }),
+      'Encoding of the image. Values are converted to what the .brdf expects (color: sRGB like the picker, float: linear).',
+    ),
+  );
+  badge.querySelector('.param-texture-name')!.after(...controls);
+  return badge;
+}
+
+/** "normal map" drop row (every analytic BRDF) and, when set, its badge. */
+function normalMapRows(store: Store, id: string, inst: BrdfInstance): HTMLElement[] {
+  const row = document.createElement('div');
+  row.className = 'ctl-row normal-map-row';
+  row.dataset.testid = 'normal-map';
+  row.title = 'Drop a tangent-space normal map here (DirectX / -Y by default; untick DX for OpenGL maps). Used in Lit Object with the mesh UVs.';
+  const label = document.createElement('span');
+  label.className = 'ctl-label';
+  label.textContent = 'normal map';
+  const hint = document.createElement('span');
+  hint.className = 'normal-map-hint';
+  hint.textContent = inst.normalMap ? '' : 'drop image (Lit Object)';
+  row.append(label, hint);
+  onImageDrop(row, async (file) => {
+    const img = await loadTextureImage(file, file.name);
+    store.setNormalMap(id, { ...img, flipY: inst.normalMap?.flipY ?? true, strength: inst.normalMap?.strength ?? 1 });
+  });
+  const nm = inst.normalMap;
+  if (!nm) return [row];
+
+  const badge = imageBadge(nm, 'normal-map-badge', 'Remove the normal map', () => store.setNormalMap(id, null));
+  badge.title = `normal map: ${nm.fileName} (${nm.width}×${nm.height}). Linear, tangent space.`;
+  const flip = document.createElement('label');
+  flip.className = 'param-texture-flag';
+  flip.title = 'Flip the green channel (DirectX-style normal maps)';
+  const flipBox = document.createElement('input');
+  flipBox.type = 'checkbox';
+  flipBox.checked = nm.flipY;
+  flipBox.dataset.testid = 'normal-map-flip-y';
+  flipBox.setAttribute('aria-label', 'Flip Y (DirectX)');
+  flipBox.addEventListener('change', () => store.setNormalMap(id, { ...nm, flipY: flipBox.checked }));
+  flip.append(flipBox, 'DX');
+  const strength = document.createElement('input');
+  strength.type = 'number';
+  strength.className = 'param-texture-strength';
+  strength.min = '0';
+  strength.max = '4';
+  strength.step = '0.1';
+  strength.value = String(nm.strength);
+  strength.title = 'Normal map strength (scales the tangent-space XY)';
+  strength.dataset.testid = 'normal-map-strength';
+  strength.setAttribute('aria-label', 'Normal map strength');
+  strength.addEventListener('change', () => {
+    const v = Number(strength.value);
+    if (Number.isFinite(v)) store.setNormalMap(id, { ...nm, strength: Math.max(0, v) });
+  });
+  badge.querySelector('.param-texture-name')!.after(flip, strength);
+  return [row, badge];
+}
+
+function imageBadge(img: TextureImage, testid: string, removeTitle: string, onRemove: () => void): HTMLElement {
+  const badge = document.createElement('div');
+  badge.className = 'param-texture';
+  badge.dataset.testid = testid;
+  const thumb = document.createElement('img');
+  thumb.src = img.url;
+  thumb.alt = '';
+  const label = document.createElement('span');
+  label.className = 'param-texture-name';
+  label.textContent = img.fileName;
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'btn btn-compact';
+  remove.textContent = '×';
+  remove.title = removeTitle;
+  remove.setAttribute('aria-label', removeTitle);
+  remove.dataset.testid = 'param-texture-remove';
+  remove.addEventListener('click', onRemove);
+  badge.append(thumb, label, remove);
+  return badge;
+}
+
+function miniSelect(
+  testid: string,
+  options: { value: string; text: string }[],
+  value: string,
+  onChange: (v: string) => void,
+  title?: string,
+): HTMLSelectElement {
+  const sel = document.createElement('select');
+  sel.className = 'param-texture-select';
+  sel.dataset.testid = `param-texture-${testid}`;
+  sel.setAttribute('aria-label', testid);
+  if (title) sel.title = title;
+  for (const o of options) {
+    const opt = document.createElement('option');
+    opt.value = o.value;
+    opt.textContent = o.text;
+    sel.append(opt);
+  }
+  sel.value = value;
+  sel.addEventListener('change', () => onChange(sel.value));
+  return sel;
 }
 
 function paramControl(store: Store, id: string, inst: BrdfInstance, p: ParamDef): HTMLElement {

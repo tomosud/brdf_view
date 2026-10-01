@@ -38,6 +38,7 @@ UI をクリックで操作するより、上のどれかを使う。UI を触�
    capture.bat --batch jobs.json
    ```
    - `--state` / `--url` / `--brdf` / `--set name=value` / `--light θ,φ` / `--opt key=value`（URL と同じキー、例 `litObject.exposure=-1`）の順に適用される
+   - `--texture base_color=albedo.png`、`--texture roughness:g=orm.png`（float はチャンネル r/g/b/a、色空間は `:srgb` / `:linear`。既定は base color が sRGB、他はリニア）でパラメータに画像を、`--normal-map normal.png`（既定は DirectX 形式。OpenGL 形式は `--normal-gl`）でノーマルマップを貼れる。Lit Object のみ。UV を持つ `dm.obj` / `teapot.obj` / `myaku.obj` / `sphere` で使う
    - ビュー名: `litObject`（`lit`）、`litSphere`（`sphere`）、`slice`、`polar`、`cartesian`、`plot3d`、`page`（画面全体）
    - 既定サイズ 512×512、`--width` / `--height` で変える。IBL は `--frames`（既定 512）回積算
    - 文書の図は `--figure`（4 倍のスーパーサンプリング、`litObject` / `litSphere` は背景透過）。個別には `--supersample n`、`--background transparent|r,g,b`

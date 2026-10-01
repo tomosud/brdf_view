@@ -14,7 +14,7 @@ import { ImageSliceView } from './views/image-slice.js';
 import { parseHdr } from './io/hdr.js';
 import { PlotPolarView } from './views/plot-polar.js';
 import { PlotCartesianView } from './views/plot-cartesian.js';
-import { scheduleSave, restoreSession } from './state/persist.js';
+import { scheduleSave, restoreSession, restoreImages } from './state/persist.js';
 import { installApi } from './api/index.js';
 import { applyState, stateFromLocation, type ViewMap } from './api/state.js';
 import { mountStateTools } from './ui/state-tools.js';
@@ -99,6 +99,8 @@ async function main(): Promise<void> {
     const warnings = await applyState(store, viewMap, linkState);
     for (const w of warnings) console.warn(`[brdfView] ${w}`);
     restored = store.state.brdfs.length > 0;
+    // Images are not in links; bring back the ones saved for the same BRDFs.
+    await restoreImages(store);
   } else {
     restored = await restoreSession(store);
   }

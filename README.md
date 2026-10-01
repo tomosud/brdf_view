@@ -68,6 +68,21 @@ capture.bat --batch jobs.json
 - Lit Object に `IBL` のチェックを追加しました。外すと HDRI の代わりに、Incident θ/φ からの平行光 1 つで照らします。
 - AI エージェント用の手順は [.claude/skills/brdf-view/SKILL.md](.claude/skills/brdf-view/SKILL.md) にあります。
 
+## テクスチャとノーマルマップ
+
+左のパネルで、BRDF の行に画像ファイル（PNG / JPEG / WebP）をドロップすると、Lit Object のモデルに UV で貼られます。
+
+- **パラメータ**（例 `base_color`、`roughness`）: そのパラメータが画素ごとに画像の値になります。
+  - float のパラメータでは、ドロップしたときに使うチャンネル（R / G / B / A）を選びます（キーボードの R/G/B/A でも可、Esc で中止）。ORM などのまとめた画像から 1 チャンネルずつ割り当てられます。color のパラメータは RGB を使います。
+  - 画像の色空間は、`base_color`（名前に base color / albedo を含むもの）が sRGB、それ以外はリニアが既定です。行の下の見本で、チャンネルと色空間（sRGB / Linear）をあとから変えられます。
+  - 値は `.brdf` が期待する形に直して渡します。color のパラメータは色の選択欄と同じ sRGB の値（`.brdf` 側で `mon2lin` してリニアにする）、float のパラメータはリニアの値です。sRGB の `base_color` 画像はそのまま渡すので、二重に変換されません。
+- **ノーマルマップ**: どの BRDF にも、先頭に `normal map` の行があります。タンジェント空間のノーマルマップをドロップします。既定は DirectX 形式（`DX` がオン、緑チャンネルを反転）で、OpenGL 形式の画像なら `DX` を外します。数値で強さを変えられます。ノーマルマップは常にリニアとして扱います。
+- 見本の `×` で外せます。
+- 効くのは Lit Object だけです。プロット・スライス・Lit Sphere は、これまでどおりスライダーの値と幾何の法線を使います。
+- UV を持つモデル（`dm`、`teapot`、`myaku`、内蔵の `sphere`）で使えます。タンジェントは UV から計算します。
+- 画像は共有 URL や状態 JSON には入りません（状態 JSON には、ファイル名・チャンネル・色空間などが参考として出ます）。画像を貼っている間は、アドレスバーの URL を更新しません。再読み込みすると外れます。
+- スクリプトからは `brdfView.setTexture('roughness', url, { channel: 'g' })`・`brdfView.setNormalMap(url)`、コマンドラインからは `--texture roughness:g=orm.png`・`--normal-map normal.png`。
+
 ## パラメータのコメント（ツールチップ）
 
 `.brdf` のパラメータ行の末尾に `# 日本語 / English` の形でコメントを書くと、画面のパラメータ名にマウスを乗せたときにツールチップとして表示されます（このプロジェクトの拡張。元の形式ではコメントは無視されるだけなので互換性は保たれます）。

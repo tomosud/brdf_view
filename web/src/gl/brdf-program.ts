@@ -3,8 +3,12 @@
 // instance's parameter values as uniforms. Used by every BRDF view.
 
 import { buildProgram, Uniforms, ShaderError } from './renderer.js';
-import { injectTemplate, loadTemplate } from '../brdf/shader-builder.js';
-import type { BrdfDef, BrdfInstance } from '../brdf/types.js';
+import { injectTemplate, loadTemplate, textureUniform, type TextureBinding } from '../brdf/shader-builder.js';
+import type { BrdfDef, BrdfInstance, TextureImage } from '../brdf/types.js';
+
+/** Texture units: 0 measured data, 1-3 Lit Object environment, 4 normal map, 5+ parameter images. */
+export const NORMAL_MAP_UNIT = 4;
+const PARAM_TEXTURE_UNIT = 5;
 
 export interface BrdfProgram {
   program: WebGLProgram;
@@ -14,8 +18,10 @@ export interface BrdfProgram {
 
 export class BrdfProgramCache {
   private templates: { vert: string; frag: string } | null = null;
-  private programs = new Map<BrdfDef, BrdfProgram | 'error'>();
+  /** Per BRDF: one program per set of textured parameters ('' = none). */
+  private programs = new Map<BrdfDef, Map<string, BrdfProgram | 'error'>>();
   private textures = new Map<BrdfDef, WebGLTexture>();
+  private imageTextures = new WeakMap<HTMLImageElement, WebGLTexture>();
   readonly ready: Promise<void>;
 
   constructor(
@@ -29,28 +35,40 @@ export class BrdfProgramCache {
     });
   }
 
-  /** Linked program for a BRDF (built and cached lazily). null on compile error. */
-  get(def: BrdfDef): BrdfProgram | null {
-    const cached = this.programs.get(def);
+  /**
+   * Linked program for a BRDF (built and cached lazily). null on compile error.
+   * `bindings` lists parameters read from images (templates with vUV only).
+   */
+  get(def: BrdfDef, bindings: readonly TextureBinding[] = []): BrdfProgram | null {
+    const key = bindings
+      .map((b) => `${b.name}:${b.channel}:${b.convert}`)
+      .sort()
+      .join(',');
+    let variants = this.programs.get(def);
+    if (!variants) {
+      variants = new Map();
+      this.programs.set(def, variants);
+    }
+    const cached = variants.get(key);
     if (cached) return cached === 'error' ? null : cached;
     if (!this.templates) return null;
     const gl = this.gl;
     try {
       const program = buildProgram(
         gl,
-        injectTemplate(this.templates.vert, def),
-        injectTemplate(this.templates.frag, def),
-        `${this.label}:${def.name}`,
+        injectTemplate(this.templates.vert, def, bindings),
+        injectTemplate(this.templates.frag, def, bindings),
+        `${this.label}:${def.name}${key ? ` [textures: ${key}]` : ''}`,
       );
       const rec: BrdfProgram = {
         program,
         u: new Uniforms(gl, program),
         posLoc: gl.getAttribLocation(program, 'vtx_position'),
       };
-      this.programs.set(def, rec);
+      variants.set(key, rec);
       return rec;
     } catch (e) {
-      this.programs.set(def, 'error');
+      variants.set(key, 'error');
       if (e instanceof ShaderError) reportShaderError(`${this.label}:${def.name}`, e);
       else console.error(e);
       return null;
@@ -78,8 +96,44 @@ export class BrdfProgramCache {
     return tex;
   }
 
+  /** Bind an image (uploaded once per context) to a texture unit. */
+  bindImage(unit: number, tex: TextureImage): void {
+    this.gl.activeTexture(this.gl.TEXTURE0 + unit);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, this.ensureImageTexture(tex));
+  }
+
+  /** Upload (once per context) an image as an RGBA8 texture with mipmaps; values stay raw. */
+  private ensureImageTexture(tex: TextureImage): WebGLTexture {
+    let t = this.imageTextures.get(tex.image);
+    if (t) return t;
+    const gl = this.gl;
+    t = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    // OBJ UVs have v = 0 at the bottom; keep the raw pixel values (no color management).
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, tex.image);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    this.imageTextures.set(tex.image, t);
+    return t;
+  }
+
   /** Set the BRDF's float/bool/color parameter uniforms from its current values. */
-  applyParams(u: Uniforms, inst: BrdfInstance): void {
+  applyParams(u: Uniforms, inst: BrdfInstance, bindings: readonly TextureBinding[] = []): void {
+    const textured = bindings.map((b) => b.name);
+    textured.forEach((name, i) => {
+      const tex = inst.textures?.get(name);
+      if (!tex) return;
+      this.bindImage(PARAM_TEXTURE_UNIT + i, tex);
+      u.i(textureUniform(name), PARAM_TEXTURE_UNIT + i);
+    });
     if (inst.def.measured) {
       const tex = this.ensureTexture(inst.def);
       if (tex) {
@@ -89,6 +143,7 @@ export class BrdfProgramCache {
       }
     }
     for (const p of inst.def.params) {
+      if (textured.includes(p.name)) continue;
       const v = inst.values.get(p.name);
       if (p.kind === 'float') u.f(p.name, typeof v === 'number' ? v : p.default);
       else if (p.kind === 'bool') u.i(p.name, v ? 1 : 0);

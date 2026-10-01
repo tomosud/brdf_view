@@ -7,11 +7,12 @@
 // (store incidentTheta/Phi, z-up like the other views) instead of the HDRI.
 
 import { BaseView, DEG2RAD_, RAD2DEG, bool, num, obj, round6, str, type ViewState } from './base-view.js';
-import { BrdfProgramCache } from '../gl/brdf-program.js';
+import { BrdfProgramCache, NORMAL_MAP_UNIT } from '../gl/brdf-program.js';
+import { textureBindings } from '../brdf/param-texture.js';
 import { buildProgram, Uniforms } from '../gl/renderer.js';
 import { loadTemplate } from '../brdf/shader-builder.js';
 import { uploadEnv, type EnvTexture } from '../gl/env-texture.js';
-import { buildSphere, parseObjMesh, type IndexedMesh } from '../gl/mesh.js';
+import { buildSphere, computeTangents, parseObjMesh, type IndexedMesh } from '../gl/mesh.js';
 import { perspective, lookAt, DEG2RAD } from '../gl/mat4.js';
 import { boolControl, floatControl, selectControl } from '../ui/controls.js';
 import { parseHdr } from '../io/hdr.js';
@@ -38,6 +39,9 @@ export class LitObjectView extends BaseView {
   private display: { program: WebGLProgram; u: Uniforms };
   private posVBO: WebGLBuffer;
   private normalVBO: WebGLBuffer;
+  private uvVBO: WebGLBuffer;
+  private tangentVBO: WebGLBuffer;
+  private meshHasUVs = false;
   private idxVBO: WebGLBuffer;
   private indexCount = 0;
   private emptyVAO: WebGLVertexArrayObject;
@@ -93,6 +97,8 @@ export class LitObjectView extends BaseView {
 
     this.posVBO = gl.createBuffer()!;
     this.normalVBO = gl.createBuffer()!;
+    this.uvVBO = gl.createBuffer()!;
+    this.tangentVBO = gl.createBuffer()!;
     this.idxVBO = gl.createBuffer()!;
     this.setMesh(buildSphere(1.0, 100, 100));
     this.emptyVAO = gl.createVertexArray()!;
@@ -322,7 +328,10 @@ export class LitObjectView extends BaseView {
     gl.enable(gl.DEPTH_TEST);
     const pkg = this.store.topmostEnabled();
     if (!pkg) return;
-    const prog = this.cache.get(pkg.instance.def);
+    const textured = textureBindings(pkg.instance);
+    const normalMap = pkg.instance.normalMap;
+    if ((textured.length || normalMap) && !this.meshHasUVs) this.warnNoUVs();
+    const prog = this.cache.get(pkg.instance.def, textured);
     if (!prog) return;
 
     const s = this.store.state;
@@ -353,7 +362,16 @@ export class LitObjectView extends BaseView {
     gl.bindTexture(gl.TEXTURE_2D, this.env.marginalCdf);
     prog.u.i('envMarginalCdf', 3);
     prog.u.f('envTotalWeight', this.env.totalWeight);
-    this.cache.applyParams(prog.u, pkg.instance);
+    this.cache.applyParams(prog.u, pkg.instance, textured);
+    if (normalMap && this.meshHasUVs) {
+      this.cache.bindImage(NORMAL_MAP_UNIT, normalMap);
+      prog.u.i('normalMap', NORMAL_MAP_UNIT);
+      prog.u.f('useNormalMap', 1);
+      prog.u.f('normalFlipY', normalMap.flipY ? -1 : 1);
+      prog.u.f('normalStrength', normalMap.strength);
+    } else {
+      prog.u.f('useNormalMap', 0);
+    }
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posVBO);
     gl.enableVertexAttribArray(prog.posLoc);
@@ -363,6 +381,18 @@ export class LitObjectView extends BaseView {
       gl.bindBuffer(gl.ARRAY_BUFFER, this.normalVBO);
       gl.enableVertexAttribArray(normalLoc);
       gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0);
+    }
+    const uvLoc = gl.getAttribLocation(prog.program, 'vtx_uv');
+    if (uvLoc >= 0) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.uvVBO);
+      gl.enableVertexAttribArray(uvLoc);
+      gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 0, 0);
+    }
+    const tangentLoc = gl.getAttribLocation(prog.program, 'vtx_tangent');
+    if (tangentLoc >= 0) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.tangentVBO);
+      gl.enableVertexAttribArray(tangentLoc);
+      gl.vertexAttribPointer(tangentLoc, 4, gl.FLOAT, false, 0, 0);
     }
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.idxVBO);
     gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_INT, 0);
@@ -410,7 +440,14 @@ export class LitObjectView extends BaseView {
     const pkg = this.store.topmostEnabled();
     const s = this.store.state;
     return JSON.stringify([
-      pkg ? [pkg.instance.id, [...pkg.instance.values]] : null,
+      pkg
+        ? [
+            pkg.instance.id,
+            [...pkg.instance.values],
+            [...(pkg.instance.textures ?? [])].map(([k, t]) => [k, t.url, t.channel, t.colorSpace]),
+            pkg.instance.normalMap ? [pkg.instance.normalMap.url, pkg.instance.normalMap.flipY, pkg.instance.normalMap.strength] : null,
+          ]
+        : null,
       this.renderWithIBL ? null : [s.incidentTheta, s.incidentPhi, s.useNDotL],
     ]);
   }
@@ -446,6 +483,12 @@ export class LitObjectView extends BaseView {
     gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.normalVBO);
     gl.bufferData(gl.ARRAY_BUFFER, mesh.normals ?? mesh.positions, gl.STATIC_DRAW);
+    this.meshHasUVs = !!mesh.uvs;
+    this.warnedNoUVs = false;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.uvVBO);
+    gl.bufferData(gl.ARRAY_BUFFER, mesh.uvs ?? new Float32Array((mesh.positions.length / 3) * 2), gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.tangentVBO);
+    gl.bufferData(gl.ARRAY_BUFFER, computeTangents(mesh) ?? new Float32Array((mesh.positions.length / 3) * 4), gl.STATIC_DRAW);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.idxVBO);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
   }
@@ -454,6 +497,18 @@ export class LitObjectView extends BaseView {
     const p = this.loadEnvironmentNow(name);
     this.pendingLoad = this.pendingLoad.then(() => p);
     return p;
+  }
+
+  private warnedNoUVs = false;
+  private warnNoUVs(): void {
+    if (this.warnedNoUVs) return;
+    this.warnedNoUVs = true;
+    console.warn(`[brdfView] Lit Object: "${this.meshName}" has no texture coordinates; parameter images and normal maps cannot be mapped`);
+  }
+
+  /** Whether the current mesh has texture coordinates. */
+  hasUVs(): boolean {
+    return this.meshHasUVs;
   }
 
   private async loadEnvironmentNow(name: string): Promise<void> {

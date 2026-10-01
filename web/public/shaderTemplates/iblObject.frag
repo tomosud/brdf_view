@@ -22,9 +22,16 @@ uniform float grayscaleIBL;
 uniform float envTotalWeight;
 uniform int numSamples;
 uniform int frameIndex;
+// Tangent-space normal map (OpenGL convention; normalFlipY = -1 for DirectX maps).
+uniform sampler2D normalMap;
+uniform float useNormalMap;
+uniform float normalFlipY;
+uniform float normalStrength;
 
 in vec3 wNormal;
 in vec3 wPos;
+in vec2 vUV; // mesh texture coordinates (parameter images, normal map)
+in vec4 wTangent;
 
 out vec4 fragColor;
 
@@ -159,7 +166,21 @@ float powerCosinePdf(float cosTheta, float exponent)
 
 void main(void)
 {
+    // Parameters with an attached image are read per pixel here.
+    ::INSERT_TEXTURE_FETCH_HERE::
+
     vec3 N = normalize(wNormal);
+    if (useNormalMap > 0.5) {
+        vec3 T = wTangent.xyz - N * dot(N, wTangent.xyz);
+        if (dot(T, T) > 1e-12) {
+            T = normalize(T);
+            vec3 B = cross(N, T) * (wTangent.w < 0.0 ? -1.0 : 1.0);
+            vec3 nm = texture(normalMap, vUV).xyz * 2.0 - 1.0;
+            nm.y *= normalFlipY;
+            nm.xy *= normalStrength;
+            N = normalize(T * nm.x + B * nm.y + N * max(nm.z, 1e-4));
+        }
+    }
     vec3 V = normalize(cameraPos - wPos);
     vec3 X, Y;
     buildTBN(N, X, Y);

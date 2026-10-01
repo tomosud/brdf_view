@@ -36,6 +36,10 @@ export interface BrdfEntryState {
   source?: string;
   /** Set for measured (MERL / RGL) BRDFs, which cannot be stored in a state. */
   measured?: boolean;
+  /** Images attached to parameters (informational: images are not restored). */
+  textures?: Record<string, { file: string; channel: string; colorSpace: string }>;
+  /** Normal map (informational: the image is not restored). */
+  normalMap?: { file: string; flipY: boolean; strength: number };
   visible?: boolean;
   params?: Record<string, ParamValue>;
 }
@@ -96,6 +100,14 @@ function entryFromInstance(inst: BrdfInstance): BrdfEntryState {
         : { name: inst.def.name, measured: true };
   entry.visible = inst.visible;
   entry.params = params;
+  if (inst.textures?.size) {
+    entry.textures = Object.fromEntries(
+      [...inst.textures].map(([k, t]) => [k, { file: t.fileName, channel: t.channel, colorSpace: t.colorSpace }]),
+    );
+  }
+  if (inst.normalMap) {
+    entry.normalMap = { file: inst.normalMap.fileName, flipY: inst.normalMap.flipY, strength: inst.normalMap.strength };
+  }
   return entry;
 }
 

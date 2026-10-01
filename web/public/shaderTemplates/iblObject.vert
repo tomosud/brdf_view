@@ -7,13 +7,19 @@ uniform mat4 viewMatrix;
 
 in vec3 vtx_position;
 in vec3 vtx_normal;
+in vec2 vtx_uv;
+in vec4 vtx_tangent;
 
 out vec3 wNormal;
 out vec3 wPos;
+out vec2 vUV;
+out vec4 wTangent;
 
 void main(void)
 {
     wPos = vtx_position;
     wNormal = normalize(vtx_normal);
+    vUV = vtx_uv;
+    wTangent = vtx_tangent;
     gl_Position = projectionMatrix * viewMatrix * vec4(vtx_position, 1.0);
 }

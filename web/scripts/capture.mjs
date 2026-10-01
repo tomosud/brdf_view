@@ -10,7 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync, createReadStream } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
-import { dirname, extname, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -28,6 +28,14 @@ State (applied in this order, each optional):
   --set <name=value>     Set a parameter of the visible BRDF (repeatable; color: r,g,b)
   --light <theta[,phi]>  Incident light angles in degrees
   --opt <key=value>      Any state key in link form, e.g. litObject.exposure=-1 (repeatable)
+  --texture <spec=image> Map an image onto a float/color parameter in litObject (repeatable;
+                         PNG / JPEG / WebP). spec = name[:channel][:space], e.g.
+                         base_color=albedo.png, roughness:g=orm.png, roughness:r:srgb=r.png.
+                         channel r/g/b/a (float, default r); space srgb/linear (default:
+                         sRGB for base color, linear otherwise)
+  --normal-map <image>   Tangent-space normal map for litObject (DirectX convention by default)
+  --normal-gl            The normal map is OpenGL style (+Y up; do not flip green)
+  --normal-strength <s>  Scale the normal map XY (default 1)
 
 Outputs:
   --view <name>          View to render: litObject, litSphere, slice, polar, cartesian,
@@ -54,7 +62,7 @@ Outputs:
 
 Batch:
   --batch <jobs.json>    {"defaults": {...}, "jobs": [{...}, ...]} or a plain array. Job keys
-                         are the long option names (url, state, brdf, set, light, opt, view,
+                         are the long option names (url, state, brdf, set, light, opt, texture, normalMap, normalFlipY, normalStrength, view,
                          out, width, height, frames, supersample, background, figure, data, dataView, resolution, eval,
                          evalOut, saveState, printLink). "state" may be an object. Paths are
                          relative to the batch file. One browser for all jobs.
@@ -74,6 +82,11 @@ const { values: args } = parseArgs({
     set: { type: 'string', multiple: true },
     light: { type: 'string' },
     opt: { type: 'string', multiple: true },
+    texture: { type: 'string', multiple: true },
+    'normal-map': { type: 'string' },
+    'normal-gl': { type: 'boolean' },
+    'normal-flip-y': { type: 'boolean' }, // accepted for compatibility (now the default)
+    'normal-strength': { type: 'string' },
     view: { type: 'string', multiple: true },
     out: { type: 'string' },
     width: { type: 'string' },
@@ -141,6 +154,26 @@ function normalizeJob(job, baseDir) {
   if (set && !Array.isArray(set) && typeof set === 'object') set = Object.entries(set).map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(',') : v}`);
   let opt = job.opt;
   if (opt && !Array.isArray(opt) && typeof opt === 'object') opt = Object.entries(opt).map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(',') : v}`);
+  let texture = job.texture;
+  // Batch form: { "roughness": "r.png" } or { "roughness": { "file": "orm.png", "channel": "g", "colorSpace": "linear" } }
+  if (texture && !Array.isArray(texture) && typeof texture === 'object') {
+    texture = Object.entries(texture).map(([k, v]) =>
+      typeof v === 'object' ? `${[k, v.channel, v.colorSpace].filter(Boolean).join(':')}=${v.file}` : `${k}=${v}`,
+    );
+  }
+  const textures = list(texture).map((kv) => {
+    const eq = String(kv).indexOf('=');
+    if (eq < 0) throw new Error(`--texture expects name[:channel][:space]=image, got "${kv}"`);
+    const [name, ...mods] = String(kv).slice(0, eq).split(':');
+    const spec = { name, path: abs(String(kv).slice(eq + 1)) };
+    for (const m of mods.map((x) => x.toLowerCase())) {
+      if (['r', 'g', 'b', 'a', 'rgb'].includes(m)) spec.channel = m;
+      else if (m === 'srgb' || m === 'linear') spec.colorSpace = m;
+      else throw new Error(`--texture: unknown modifier "${m}" in "${kv}" (channel r/g/b/a, space srgb/linear)`);
+    }
+    return spec;
+  });
+  const normalMap = job.normalMap ?? job['normal-map'];
   let evalSpec = job.eval;
   if (typeof evalSpec === 'string') evalSpec = readJson(abs(evalSpec));
   const num = (v) => (v === undefined ? undefined : Number(v));
@@ -151,6 +184,10 @@ function normalizeJob(job, baseDir) {
     set: list(set).map(String),
     light: job.light === undefined ? undefined : Array.isArray(job.light) ? job.light.map(Number) : String(job.light).split(',').map(Number),
     opt: list(opt).map(String),
+    textures,
+    normalMap: abs(normalMap),
+    normalFlipY: job.normalFlipY !== undefined ? Boolean(job.normalFlipY) : !job['normal-gl'],
+    normalStrength: num(job.normalStrength ?? job['normal-strength']),
     views,
     out: abs(job.out),
     width: num(job.width),
@@ -167,6 +204,11 @@ function normalizeJob(job, baseDir) {
     saveState: abs(job.saveState ?? job['save-state']),
     printLink: Boolean(job.printLink ?? job['print-link']),
   };
+}
+
+function imageDataUrl(path) {
+  const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' }[extname(path).toLowerCase()] ?? 'image/png';
+  return `data:${mime};base64,${readFileSync(path).toString('base64')}`;
 }
 
 function outPathFor(out, view, many) {
@@ -309,6 +351,16 @@ async function runJob(context, baseUrl, job, index, total) {
     }
     if (job.light) await setState({ light: { theta: job.light[0], ...(job.light.length > 1 ? { phi: job.light[1] } : {}) } });
     if (job.opt.length) await setState(`v=1&${job.opt.map((kv) => kv.split('=').map(encodeURIComponent).join('=')).join('&')}`);
+    for (const t of job.textures) {
+      const opts = { fileName: basename(t.path), channel: t.channel, colorSpace: t.colorSpace };
+      const size = await page.evaluate(([n, d, o]) => window.brdfView.setTexture(n, d, o), [t.name, imageDataUrl(t.path), opts]);
+      log(`${label}texture ${t.name}${t.channel ? `:${t.channel}` : ''}${t.colorSpace ? `:${t.colorSpace}` : ''} <- ${t.path} (${size.width}x${size.height})`);
+    }
+    if (job.normalMap) {
+      const opts = { fileName: basename(job.normalMap), flipY: job.normalFlipY, strength: job.normalStrength };
+      const size = await page.evaluate(([d, o]) => window.brdfView.setNormalMap(d, o), [imageDataUrl(job.normalMap), opts]);
+      log(`${label}normal map <- ${job.normalMap} (${size.width}x${size.height})`);
+    }
 
     if (job.views.length && !job.out) throw new Error('--view needs --out');
     for (const view of job.views) {

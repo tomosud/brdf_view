@@ -56,6 +56,10 @@ export function buildHemisphere(depth = 6): HemisphereMesh {
 export interface IndexedMesh {
   positions: Float32Array;
   normals?: Float32Array;
+  /** Texture coordinates (2 per vertex), when the source has them. */
+  uvs?: Float32Array;
+  /** Tangents (xyz + handedness w) along +u, for normal maps. Needs uvs. */
+  tangents?: Float32Array;
   indices: Uint32Array;
 }
 
@@ -66,6 +70,7 @@ export interface IndexedMesh {
  */
 export function buildSphere(radius = 1.0, nU = 100, nV = 100): IndexedMesh {
   const positions = new Float32Array((nU + 1) * (nV + 1) * 3);
+  const uvs = new Float32Array((nU + 1) * (nV + 1) * 2);
   for (let v = 0; v <= nV; v++) {
     for (let u = 0; u <= nU; u++) {
       const theta = (u / nU) * Math.PI;
@@ -77,6 +82,9 @@ export function buildSphere(radius = 1.0, nU = 100, nV = 100): IndexedMesh {
       positions[i] = nx * radius;
       positions[i + 1] = ny * radius;
       positions[i + 2] = nz * radius;
+      const t = (u + (nU + 1) * v) * 2;
+      uvs[t] = v / nV; // longitude
+      uvs[t + 1] = 1 - u / nU; // latitude, v = 1 at the +z pole
     }
   }
   const indices = new Uint32Array(nU * nV * 6);
@@ -92,32 +100,39 @@ export function buildSphere(radius = 1.0, nU = 100, nV = 100): IndexedMesh {
       indices[k++] = vi + (nU + 1);
     }
   }
-  return { positions, normals: positions.slice(), indices };
+  return { positions, normals: positions.slice(), uvs, indices };
 }
 
 export function parseObjMesh(text: string): IndexedMesh {
   const srcPositions: number[][] = [];
   const srcNormals: number[][] = [];
+  const srcUvs: number[][] = [];
   const positions: number[] = [];
   const normals: number[] = [];
+  const uvs: number[] = [];
   const indices: number[] = [];
   const keyToIndex = new Map<string, number>();
 
   const addVertex = (token: string): number => {
-    const cached = keyToIndex.get(token);
-    if (cached !== undefined) return cached;
-    const [vRaw, , nRaw] = token.split('/');
+    const [vRaw, tRaw, nRaw] = token.split('/');
     const p = srcPositions[Number(vRaw) - 1];
     if (!p) throw new Error(`OBJ references missing vertex ${token}`);
     const n = nRaw ? srcNormals[Number(nRaw) - 1] : undefined;
+    // Share vertices that agree in position, UV and normal value (exporters
+    // often write one normal index per face corner), so tangents average.
+    const key = `${vRaw}/${tRaw ?? ''}/${n ? n.join(',') : ''}`;
+    const cached = keyToIndex.get(key);
+    if (cached !== undefined) return cached;
     const idx = positions.length / 3;
     positions.push(p[0], p[1], p[2]);
+    const t = tRaw ? srcUvs[Number(tRaw) - 1] : undefined;
+    uvs.push(t ? t[0] : 0, t ? t[1] : 0);
     if (n) normals.push(n[0], n[1], n[2]);
     else {
       const l = Math.hypot(p[0], p[1], p[2]) || 1;
       normals.push(p[0] / l, p[1] / l, p[2] / l);
     }
-    keyToIndex.set(token, idx);
+    keyToIndex.set(key, idx);
     return idx;
   };
 
@@ -127,6 +142,8 @@ export function parseObjMesh(text: string): IndexedMesh {
     const parts = trimmed.split(/\s+/);
     if (parts[0] === 'v') {
       srcPositions.push([Number(parts[1]), Number(parts[2]), Number(parts[3])]);
+    } else if (parts[0] === 'vt') {
+      srcUvs.push([Number(parts[1]), Number(parts[2] ?? 0)]);
     } else if (parts[0] === 'vn') {
       srcNormals.push([Number(parts[1]), Number(parts[2]), Number(parts[3])]);
     } else if (parts[0] === 'f') {
@@ -139,7 +156,58 @@ export function parseObjMesh(text: string): IndexedMesh {
 
   normalizePositions(positions);
   const finalNormals = srcNormals.length ? normals : computeVertexNormals(positions, indices);
-  return { positions: new Float32Array(positions), normals: new Float32Array(finalNormals), indices: new Uint32Array(indices) };
+  return {
+    positions: new Float32Array(positions),
+    normals: new Float32Array(finalNormals),
+    ...(srcUvs.length ? { uvs: new Float32Array(uvs) } : {}),
+    indices: new Uint32Array(indices),
+  };
+}
+
+/**
+ * Per-vertex tangents from positions / normals / UVs (accumulated per triangle,
+ * Gram-Schmidt against the normal). w = +1 / -1 is the bitangent handedness.
+ */
+export function computeTangents(mesh: IndexedMesh): Float32Array | undefined {
+  const { positions: P, uvs: T, indices: I } = mesh;
+  const N = mesh.normals;
+  if (!T || !N) return undefined;
+  const n = P.length / 3;
+  const tan = new Float64Array(n * 3);
+  const bit = new Float64Array(n * 3);
+  for (let k = 0; k < I.length; k += 3) {
+    const a = I[k], b = I[k + 1], c = I[k + 2];
+    const e1 = [P[b * 3] - P[a * 3], P[b * 3 + 1] - P[a * 3 + 1], P[b * 3 + 2] - P[a * 3 + 2]];
+    const e2 = [P[c * 3] - P[a * 3], P[c * 3 + 1] - P[a * 3 + 1], P[c * 3 + 2] - P[a * 3 + 2]];
+    const du1 = T[b * 2] - T[a * 2], dv1 = T[b * 2 + 1] - T[a * 2 + 1];
+    const du2 = T[c * 2] - T[a * 2], dv2 = T[c * 2 + 1] - T[a * 2 + 1];
+    const det = du1 * dv2 - du2 * dv1;
+    if (Math.abs(det) < 1e-20) continue;
+    const r = 1 / det;
+    for (let i = 0; i < 3; i++) {
+      const t = (e1[i] * dv2 - e2[i] * dv1) * r;
+      const s = (e2[i] * du1 - e1[i] * du2) * r;
+      for (const v of [a, b, c]) {
+        tan[v * 3 + i] += t;
+        bit[v * 3 + i] += s;
+      }
+    }
+  }
+  const out = new Float32Array(n * 4);
+  for (let v = 0; v < n; v++) {
+    const nx = N[v * 3], ny = N[v * 3 + 1], nz = N[v * 3 + 2];
+    let tx = tan[v * 3], ty = tan[v * 3 + 1], tz = tan[v * 3 + 2];
+    const d = nx * tx + ny * ty + nz * tz;
+    tx -= nx * d; ty -= ny * d; tz -= nz * d;
+    const l = Math.hypot(tx, ty, tz);
+    if (l < 1e-12) continue; // left as zero: the shader skips the normal map there
+    tx /= l; ty /= l; tz /= l;
+    // handedness: sign of dot(cross(N, T), B)
+    const cx = ny * tz - nz * ty, cy = nz * tx - nx * tz, cz = nx * ty - ny * tx;
+    const w = cx * bit[v * 3] + cy * bit[v * 3 + 1] + cz * bit[v * 3 + 2] < 0 ? -1 : 1;
+    out.set([tx, ty, tz, w], v * 4);
+  }
+  return out;
 }
 
 function normalizePositions(positions: number[]): void {

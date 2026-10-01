@@ -5,6 +5,8 @@
 import type { Store } from '../state/store.js';
 import type { BrdfInstance, ParamValue } from '../brdf/types.js';
 import { shaderErrors } from '../gl/brdf-program.js';
+import { defaultColorSpace, loadTextureImage } from '../brdf/param-texture.js';
+import type { TextureChannel, TextureColorSpace } from '../brdf/types.js';
 import type { SnapshotOptions, ViewKey } from '../views/base-view.js';
 import type { LitObjectView } from '../views/lit-object.js';
 import { BrdfEvaluator, type EvalSample, type Vec3 } from './evaluate.js';
@@ -163,6 +165,51 @@ export function installApi(store: Store, views: ViewMap, ready: Promise<void>): 
       return inst.values.get(name) as ParamValue;
     },
 
+    /**
+     * Attach an image to a float/color parameter (Lit Object, mapped with the mesh UVs);
+     * `src` is a URL or data URL, null removes it. Not stored in state / links.
+     */
+    async setTexture(
+      name: string,
+      src: string | null,
+      opts: { brdf?: BrdfRef; fileName?: string; channel?: TextureChannel; colorSpace?: TextureColorSpace } = {},
+    ): Promise<{ width: number; height: number } | null> {
+      await ready;
+      const inst = findBrdf(opts.brdf);
+      const p = inst.def.params.find((x) => x.name === name);
+      if (!p || p.kind === 'bool') throw new Error(`"${name}" is not a float/color parameter of ${inst.def.name}`);
+      if (src === null) {
+        store.setParamTexture(inst.id, name, null);
+        return null;
+      }
+      const img = await fetchImage(src, opts.fileName ?? name);
+      const channel: TextureChannel = p.kind === 'color' ? 'rgb' : opts.channel && opts.channel !== 'rgb' ? opts.channel : 'r';
+      if (opts.channel && !['rgb', 'r', 'g', 'b', 'a'].includes(opts.channel)) throw new Error(`setTexture: unknown channel "${opts.channel}"`);
+      const colorSpace = opts.colorSpace ?? defaultColorSpace(name);
+      if (colorSpace !== 'srgb' && colorSpace !== 'linear') throw new Error(`setTexture: colorSpace must be "srgb" or "linear"`);
+      store.setParamTexture(inst.id, name, { ...img, channel, colorSpace });
+      return { width: img.width, height: img.height };
+    },
+
+    /**
+     * Attach a tangent-space normal map to a BRDF for Lit Object. DirectX
+     * convention (green flipped) by default; flipY: false for OpenGL maps. `src` is a URL or data URL, null removes it.
+     */
+    async setNormalMap(
+      src: string | null,
+      opts: { brdf?: BrdfRef; fileName?: string; flipY?: boolean; strength?: number } = {},
+    ): Promise<{ width: number; height: number } | null> {
+      await ready;
+      const inst = findBrdf(opts.brdf);
+      if (src === null) {
+        store.setNormalMap(inst.id, null);
+        return null;
+      }
+      const img = await fetchImage(src, opts.fileName ?? 'normal');
+      store.setNormalMap(inst.id, { ...img, flipY: opts.flipY ?? true, strength: opts.strength ?? 1 });
+      return { width: img.width, height: img.height };
+    },
+
     /** View keys, plus the environments / objects selectable in litObject. */
     listViews() {
       const lit = views.litObject as LitObjectView | undefined;
@@ -223,6 +270,13 @@ export function installApi(store: Store, views: ViewMap, ready: Promise<void>): 
   };
 
   (window as unknown as { brdfView: typeof api }).brdfView = api;
+}
+
+async function fetchImage(src: string, fallbackName: string) {
+  const res = await fetch(src);
+  if (!res.ok) throw new Error(`image: ${res.status} for ${src.slice(0, 80)}`);
+  const fileName = src.startsWith('data:') ? `${fallbackName}.png` : decodeURIComponent(src.split(/[?#]/)[0].split('/').pop() || fallbackName);
+  return loadTextureImage(await res.blob(), fallbackName.includes('.') ? fallbackName : fileName);
 }
 
 /** Accept a full URL, "#v=1&..." or "v=1&..." and return the parameter part. */

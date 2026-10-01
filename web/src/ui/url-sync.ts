@@ -5,7 +5,9 @@
 //   no hashchange, so it never re-applies the state or redraws.
 // - Only the visible BRDFs go into the URL (same as Copy link).
 // - While a visible BRDF is not a bundled sample (an opened .brdf file or a
-//   measured MERL / RGL BRDF), the URL is left as it is.
+//   measured MERL / RGL BRDF), the URL is left as it is. Images (parameter
+//   textures, normal maps) are not in the URL; they are kept in IndexedDB and
+//   re-attached on reload (state/persist.ts restoreImages).
 // - A hashchange (the user edited the URL) applies that state immediately.
 
 import type { Store } from '../state/store.js';

@@ -60,6 +60,41 @@ export interface BrdfDef {
   measured?: MeasuredData;
 }
 
+/** A decoded image file used as a texture (Lit Object only). */
+export interface TextureImage {
+  /** Stable id of the image data (IndexedDB key of `blob`). */
+  id: string;
+  /** The original file data, kept for saving to IndexedDB. */
+  blob: Blob;
+  fileName: string;
+  image: HTMLImageElement;
+  /** Object URL of the image (thumbnail); revoked when the texture is removed. */
+  url: string;
+  width: number;
+  height: number;
+}
+
+export type TextureChannel = 'rgb' | 'r' | 'g' | 'b' | 'a';
+export type TextureColorSpace = 'srgb' | 'linear';
+
+/**
+ * An image attached to a float/color parameter. In Lit Object the parameter is
+ * read from the image per pixel (mesh UVs) instead of the slider value.
+ * color parameters use RGB, float parameters one channel. `colorSpace` is the
+ * image's encoding; values are converted to what the .brdf expects (color
+ * parameters: sRGB like the color picker, float parameters: linear).
+ */
+export interface ParamTexture extends TextureImage {
+  channel: TextureChannel;
+  colorSpace: TextureColorSpace;
+}
+
+/** Tangent-space normal map; flipY = DirectX convention (the default). Lit Object only. */
+export interface NormalMap extends TextureImage {
+  flipY: boolean;
+  strength: number;
+}
+
 /** A loaded BRDF together with its live UI state and current parameter values. */
 export interface BrdfInstance {
   id: string;
@@ -68,4 +103,8 @@ export interface BrdfInstance {
   values: Map<string, ParamValue>;
   /** Enabled / drawn (original "visible"). */
   visible: boolean;
+  /** Images attached to parameters (Lit Object only). Not part of state / links. */
+  textures?: Map<string, ParamTexture>;
+  /** Normal map for this BRDF (Lit Object only). Not part of state / links. */
+  normalMap?: NormalMap;
 }
