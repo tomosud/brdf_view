@@ -15,6 +15,12 @@
 // BRDF_sss_diffuse): the lighting is split over three outputs so that only the
 // diffuse light is blurred afterwards. Without the define this shader is the
 // plain single-output one.
+//
+// Specular Glazing Blur variant (experimental custom approximation, defines set
+// by src/gl/glazing.ts; IBL with ray-traced occlusion only):
+//   GLAZING_GBUFFER -> pre-pass that only writes normal, depth and position
+//   BRDF_GLAZING    -> each sample takes the specular normal and the shadow-ray
+//                      origin from a random nearby pixel of that G-buffer
 precision highp float;
 precision highp int;
 
@@ -57,7 +63,25 @@ in vec4 vOcc1;
 in vec4 vOcc2;
 in vec4 vOcc3;
 
-#ifdef BRDF_SSS
+#if defined(BRDF_GLAZING) || defined(GLAZING_GBUFFER)
+// Camera forward axis, for the view depth of the glazing G-buffer.
+uniform vec3 glazingCamForward;
+#endif
+#ifdef BRDF_GLAZING
+uniform highp sampler2D glazingNormalDepth; // xyz: shading normal, w: view depth in scene units (0 = no surface)
+uniform highp sampler2D glazingPosition;    // xyz: world position
+uniform highp sampler2D glazingGeomNormal;  // xyz: geometric normal
+uniform float glazingCmPerUnit;        // cm per scene unit
+uniform float glazingPixelsPerCm;      // pixels per cm at view depth 1
+// GLAZING_GRAZE_POWER, GLAZING_RADIUS_POWER, GLAZING_DEPTH_TOLERANCE_CM, GLAZING_BORROW_NORMAL
+// and GLAZING_BORROW_SHADOW are defined by src/gl/glazing.ts: a .brdf parameter or a constant.
+#endif
+
+#ifdef GLAZING_GBUFFER
+layout(location = 0) out vec4 fragColor;         // xyz: shading normal; w: view depth
+layout(location = 1) out vec4 fragGlazingPos;    // xyz: world position
+layout(location = 2) out vec4 fragGlazingGeomN;  // xyz: geometric normal
+#elif defined(BRDF_SSS)
 // Camera forward axis, for the view depth stored next to the diffuse light.
 uniform vec3 sssCamForward;
 layout(location = 0) out vec4 fragColor;      // specular (not scattered); a: coverage
@@ -161,6 +185,28 @@ float hash(vec2 p)
 {
     return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
+
+#ifdef BRDF_GLAZING
+uint glazingMix(uint x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+// One of 512 fixed offsets in the unit disc, picked per pixel and sample:
+// radius (u / 512)^GLAZING_RADIUS_POWER (3: dense near the centre), angle from the bit-reversed index.
+vec2 glazingOffset(ivec2 pixel, int sampleIndex)
+{
+    uint u = glazingMix(uint(pixel.x) + glazingMix(uint(pixel.y) + glazingMix(uint(sampleIndex)))) >> 23;
+    float r = u > 0u ? pow(float(u) / 512.0, max(GLAZING_RADIUS_POWER, 0.01)) : 0.0;
+    float phi = radicalInverse(u) * (2.0 * kPI);
+    return r * vec2(cos(phi), sin(phi));
+}
+#endif
 
 // Blocked fraction toward d from the baked occlusion SH. The real SH basis
 // must match ACCUM_FRAG in src/gl/visibility-bake.ts.
@@ -300,11 +346,30 @@ void main(void)
             N = normalize(T * nm.x + B * nm.y + N * max(nm.z, 1e-4));
         }
     }
+#ifdef GLAZING_GBUFFER
+    fragColor = vec4(N, dot(wPos - cameraPos, glazingCamForward));
+    fragGlazingPos = vec4(wPos, 1.0);
+    fragGlazingGeomN = vec4(Ng, 0.0);
+    return;
+#endif
     vec3 V = normalize(cameraPos - wPos);
     vec3 X, Y;
     buildTBN(N, X, Y);
 
     vec3 result = vec3(0.0);
+#ifdef BRDF_GLAZING
+    float glazingDepth = dot(wPos - cameraPos, glazingCamForward);
+#ifdef BRDF_GLAZING_HAS_STRENGTH
+    float glazingRadiusCm = glazing_blur_radius * clamp(advanced_strength, 0.0, 1.0);
+#else
+    float glazingRadiusCm = glazing_blur_radius;
+#endif
+#ifdef BRDF_GLAZING_HAS_ALBEDO
+    vec3 glazingAlbedo = max(BRDF_sss_albedo(), vec3(0.0));
+#else
+    vec3 glazingAlbedo = vec3(1.0);
+#endif
+#endif
 #ifdef BRDF_SSS
     // result holds the specular part; the diffuse part (before albedo) goes to sssDiffuse.
     vec3 sssDiffuse = vec3(0.0);
@@ -346,6 +411,55 @@ void main(void)
             float sharpPdf = powerCosinePdf(dot(R, L), sharpGlossExponent);
             float envPdf = envImportancePdf(L);
             float pdf = (cosinePdf + mediumPdf + sharpPdf + envPdf) / 4.0;
+#ifdef BRDF_GLAZING
+            // This variant is only used with ray-traced occlusion (occlusionMode 2).
+            // A sample below this pixel's horizon can still light the specular
+            // through a borrowed normal, so only pdf <= 0 is skipped here.
+            if (pdf <= 0.0) continue;
+            vec3 Nb = N;   // specular normal
+            vec3 Ns = N;   // shading normal at the position the shadow is taken from
+            vec3 posB = wPos;
+            vec3 NgB = Ng;
+            float glazingGraze = GLAZING_GRAZE_POWER > 0.0 ? pow(1.0 - min(nDotL, 1.0), GLAZING_GRAZE_POWER) : 1.0;
+            float glazingRad = glazingRadiusCm * glazingGraze;
+            if (glazingRad > 0.0) {
+                ivec2 size = textureSize(glazingNormalDepth, 0);
+                vec2 offset = glazingOffset(ivec2(gl_FragCoord.xy), sampleIndex) * (glazingRad * glazingPixelsPerCm / glazingDepth);
+                ivec2 q = clamp(ivec2(floor(gl_FragCoord.xy + offset)), ivec2(0), size - 1);
+                vec4 g = texelFetch(glazingNormalDepth, q, 0);
+                // same surface only: the neighbour must exist and lie at nearly the same depth
+                if (g.w > 0.0 && abs(g.w - glazingDepth) * glazingCmPerUnit < GLAZING_DEPTH_TOLERANCE_CM) {
+                    if (GLAZING_BORROW_NORMAL) Nb = normalize(g.xyz);
+                    if (GLAZING_BORROW_SHADOW) {
+                        Ns = normalize(g.xyz);
+                        posB = texelFetch(glazingPosition, q, 0).xyz;
+                        NgB = texelFetch(glazingGeomNormal, q, 0).xyz;
+                    }
+                }
+            }
+            float nDotLB = max(dot(Nb, L), 0.0);
+            // A surface facing away from the light at the shadow position is in its own
+            // shadow (the shadow ray alone would start below it and miss it).
+            if (dot(Ns, L) <= 0.0 || (nDotL <= 0.0 && nDotLB <= 0.0)) continue;
+            vec3 Xb, Yb;
+            buildTBN(Nb, Xb, Yb);
+            vec3 env = sampleEnv(L);
+            // diffuse: own normal; specular: borrowed normal (also for its N.L)
+            vec3 gd = nDotL > 0.0 ? max(BRDF_sss_diffuse(L, V, N, X, Y), vec3(0.0)) * env * nDotL / pdf : vec3(0.0);
+            vec3 gs = nDotLB > 0.0
+                ? max(max(BRDF(L, V, Nb, Xb, Yb), vec3(0.0)) - max(BRDF_sss_diffuse(L, V, Nb, Xb, Yb), vec3(0.0)) * glazingAlbedo, vec3(0.0)) * env * nDotLB / pdf
+                : vec3(0.0);
+            if (max(max(gd.r, max(gd.g, gd.b)), max(gs.r, max(gs.g, gs.b))) <= 0.0) continue;
+            // the shadow is taken at the borrowed position, for diffuse and specular alike
+            vec3 originB = posB + NgB * (dot(NgB, L) >= 0.0 ? rayEpsilon : -rayEpsilon);
+            if (occludedRay(originB, L)) continue;
+#ifdef BRDF_SSS
+            sssDiffuse += gd;
+            result += gs;
+#else
+            result += gd * glazingAlbedo + gs;
+#endif
+#else
             if (nDotL <= 0.0 || pdf <= 0.0) continue;
 
             float visibility = occlusionMode == 1 ? 1.0 - occlusionSH(L) : 1.0;
@@ -365,6 +479,7 @@ void main(void)
             result += max(contribution - d * sssAlbedo, vec3(0.0));
 #else
             result += contribution;
+#endif
 #endif
         }
         result /= float(numSamples);

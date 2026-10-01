@@ -7,7 +7,7 @@
 // (store incidentTheta/Phi, z-up like the other views) instead of the HDRI.
 
 import { BaseView, DEG2RAD_, RAD2DEG, bool, num, obj, round6, str, type ViewState } from './base-view.js';
-import { BrdfProgramCache, BVH_NODE_UNIT, BVH_TRI_UNIT, NORMAL_MAP_UNIT } from '../gl/brdf-program.js';
+import { BrdfProgramCache, BVH_NODE_UNIT, BVH_TRI_UNIT, NORMAL_MAP_UNIT, type BrdfProgram } from '../gl/brdf-program.js';
 import { textureBindings } from '../brdf/param-texture.js';
 import { buildProgram, Uniforms } from '../gl/renderer.js';
 import { loadTemplate } from '../brdf/shader-builder.js';
@@ -18,6 +18,7 @@ import { BVH_TEXTURE_WIDTH, buildBvhAsync, type PackedBvh } from '../gl/bvh.js';
 import { perspective, lookAt, DEG2RAD } from '../gl/mat4.js';
 import { TONEMAP_GLSL, ToneMapper } from '../gl/tonemap.js';
 import { SssPipeline, sssDefines, sssParamsOf, sssSupport } from '../gl/sss.js';
+import { GLAZING_GBUFFER_DEFINES, GlazingGBuffer, glazingDefines, glazingSupport } from '../gl/glazing.js';
 import { ModelTextures } from './model-textures.js';
 import { boolControl, floatControl, selectControl } from '../ui/controls.js';
 import { parseHdr } from '../io/hdr.js';
@@ -140,6 +141,13 @@ export class LitObjectView extends BaseView {
   /** Size the current mesh suggests (its own unit, or DEFAULT_SIZE_CM). */
   private meshSizeCm = DEFAULT_SIZE_CM;
   private sss: SssPipeline | null = null;
+  /**
+   * Specular Glazing Blur (src/gl/glazing.ts; experimental custom approximation).
+   * On by default, but only drawn for a .brdf that declares glazing_blur_radius,
+   * in IBL with ray-traced occlusion; otherwise the regular path is used unchanged.
+   */
+  private glazingEnabled = true;
+  private glazing: GlazingGBuffer | null = null;
   private envName = '';
   private envSelectButton: HTMLButtonElement | null = null;
   private envSelectText: HTMLElement | null = null;
@@ -230,6 +238,7 @@ export class LitObjectView extends BaseView {
       envRotation: round6(this.envRotation),
       occlusion: this.occlusion,
       sss: this.sssEnabled,
+      glazing: this.glazingEnabled,
       sizeCm: round6(this.sizeCm),
       modelTextures: this.modelTextures.isEnabled(),
       camera: {
@@ -265,6 +274,7 @@ export class LitObjectView extends BaseView {
     this.envRotation = num(s, 'envRotation') ?? this.envRotation;
     this.occlusion = parseOcclusion(s.occlusion) ?? this.occlusion;
     this.sssEnabled = bool(s, 'sss') ?? this.sssEnabled;
+    this.glazingEnabled = bool(s, 'glazing') ?? this.glazingEnabled;
     const cam = obj(s, 'camera');
     const theta = num(cam, 'theta');
     const phi = num(cam, 'phi');
@@ -420,6 +430,46 @@ export class LitObjectView extends BaseView {
     return this.sss;
   }
   private sssWasActive = false;
+
+  /** Whether the BRDF on display supports the glazing blur (drives the checkbox). */
+  private glazingAvailable(): boolean {
+    const pkg = this.store.topmostEnabled();
+    return this.floatRenderTargets && !!pkg && glazingSupport(pkg.instance.def);
+  }
+
+  /** The glazing blur is drawn only in IBL with ray-traced occlusion (it borrows the neighbour's shadow ray). */
+  private glazingActive(): boolean {
+    return this.glazingEnabled && this.renderWithIBL && this.effectiveOcclusion() === 2 && this.glazingAvailable();
+  }
+
+  /**
+   * The glazing G-buffer for this frame (normal, depth and position per pixel), or
+   * null for the regular path. It is redrawn whenever the accumulation restarts,
+   * which every change of camera, mesh, normal map or size does.
+   */
+  private prepareGlazing(cam: ReturnType<LitObjectView['camera']>, w: number, h: number): GlazingGBuffer | null {
+    if (!this.glazingActive()) return null;
+    const pkg = this.store.topmostEnabled()!;
+    // the normal does not depend on the parameters, so no parameter images are bound
+    const prog = this.cache.get(pkg.instance.def, [], GLAZING_GBUFFER_DEFINES);
+    if (!prog) return null;
+    this.glazing ??= new GlazingGBuffer(this.gl);
+    const recreated = this.glazing.ensure(w, h);
+    if (!recreated && this.accumFrame > 0) return this.glazing;
+
+    const gl = this.gl;
+    this.glazing.begin();
+    gl.depthMask(true);
+    gl.enable(gl.DEPTH_TEST);
+    gl.useProgram(prog.program);
+    prog.u.m4('projectionMatrix', cam.proj);
+    prog.u.m4('viewMatrix', cam.view);
+    prog.u.v3('cameraPos', ...cam.eye);
+    prog.u.v3('glazingCamForward', ...cam.camForward);
+    this.applyNormalMap(prog);
+    this.drawMesh(prog);
+    return this.glazing;
+  }
 
   /** Blur the diffuse and recombine; returns the texture to present. */
   private resolveSss(sss: SssPipeline, source: 'scene' | 'accum', cam: ReturnType<LitObjectView['camera']>, h: number, converged: boolean): WebGLTexture {
@@ -610,6 +660,7 @@ export class LitObjectView extends BaseView {
   ): void {
     const gl = this.gl;
     if (!this.bg) return;
+    const glazing = this.prepareGlazing(cam, w, h);
     if (sss) {
       sss.beginScene(this.snapshotClearAlpha ? 0 : 1);
       sss.selectSceneOutputs(true);
@@ -649,7 +700,8 @@ export class LitObjectView extends BaseView {
     const textured = textureBindings(pkg.instance);
     const normalMap = pkg.instance.normalMap;
     if ((textured.length || normalMap) && !this.meshHasUVs) this.warnNoUVs();
-    const prog = this.cache.get(pkg.instance.def, textured, sss ? sssDefines(pkg.instance.def) : '');
+    const defines = [sss ? sssDefines(pkg.instance.def) : '', glazing ? glazingDefines(pkg.instance.def) : ''].filter(Boolean).join('\n');
+    const prog = this.cache.get(pkg.instance.def, textured, defines);
     if (!prog) return;
 
     const s = this.store.state;
@@ -663,6 +715,11 @@ export class LitObjectView extends BaseView {
     prog.u.m4('viewMatrix', cam.view);
     prog.u.v3('cameraPos', ...cam.eye);
     if (sss) prog.u.v3('sssCamForward', ...cam.camForward);
+    glazing?.bindForShading(prog.u, {
+      camForward: cam.camForward,
+      cmPerUnit: this.sizeCm / MESH_EXTENT,
+      pixelsPerUnitAtDepth1: 0.5 * h * cam.proj[5],
+    });
     prog.u.v3('incidentVector', iv[0], iv[1], iv[2]);
     prog.u.f('useNDotL', s.useNDotL ? 1 : 0);
     prog.u.f('renderWithIBL', this.renderWithIBL ? 1 : 0);
@@ -696,6 +753,13 @@ export class LitObjectView extends BaseView {
     prog.u.i('envMarginalCdf', 3);
     prog.u.f('envTotalWeight', this.env.totalWeight);
     this.cache.applyParams(prog.u, pkg.instance, textured);
+    this.applyNormalMap(prog);
+    this.drawMesh(prog);
+  }
+
+  /** Normal-map uniforms of the BRDF on display, for the program in use. */
+  private applyNormalMap(prog: BrdfProgram): void {
+    const normalMap = this.store.topmostEnabled()?.instance.normalMap;
     if (normalMap && this.meshHasUVs) {
       this.cache.bindImage(NORMAL_MAP_UNIT, normalMap);
       prog.u.i('normalMap', NORMAL_MAP_UNIT);
@@ -705,7 +769,11 @@ export class LitObjectView extends BaseView {
     } else {
       prog.u.f('useNormalMap', 0);
     }
+  }
 
+  /** Bind the mesh attributes of the program in use and draw the mesh. */
+  private drawMesh(prog: BrdfProgram): void {
+    const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posVBO);
     gl.enableVertexAttribArray(prog.posLoc);
     gl.vertexAttribPointer(prog.posLoc, 3, gl.FLOAT, false, 0, 0);
@@ -837,6 +905,7 @@ export class LitObjectView extends BaseView {
     this.closeEnvironmentMenu();
     this.resetUnsub?.();
     this.sss?.dispose();
+    this.glazing?.dispose();
     this.disposeTarget(this.autoStopProbe);
   }
 
@@ -1038,6 +1107,18 @@ export class LitObjectView extends BaseView {
           'Pseudo SSS (custom approximation): screen-space subsurface scattering that blurs only the diffuse light; tuned by the sss_ parameters. Only for a .brdf that declares BRDF_sss_diffuse.',
       ),
       boolControl(
+        'Glazing',
+        this.glazingEnabled,
+        (v) => {
+          this.glazingEnabled = v;
+          this.resetAccumulation();
+        },
+        'Specular Glazing Blur（試験実装・独自実装・近似）: 光がかすめる明暗境界の帯で、スペキュラ用の法線と影を近くの画素から借りて、積算で平均する。' +
+          'IBL かつ Occlusion が Ray のときだけ効く。距離は glazing_blur_radius（cm）。対応する .brdf（glazing_blur_radius を持つもの）でのみ有効 / ' +
+          'Specular Glazing Blur (experimental custom approximation): near the light/dark boundary, each sample borrows the specular normal and the shadow from a nearby pixel, averaged by the accumulation. ' +
+          'Only with IBL and Occlusion = Ray; reach = glazing_blur_radius (cm). Only for a .brdf that declares glazing_blur_radius.',
+      ),
+      boolControl(
         'Model tex',
         this.modelTextures.isEnabled(),
         (v) => this.modelTextures.setEnabled(v),
@@ -1053,10 +1134,12 @@ export class LitObjectView extends BaseView {
       this.meshSizeCm,
       (v) => {
         this.sizeCm = clampSize(v);
-        this.requestRender();
+        // the glazing blur uses the size while lighting, the pseudo SSS only afterwards
+        if (this.glazingActive()) this.resetAccumulation();
+        else this.requestRender();
       },
-      '疑似 SSS 用: モデルの最大の辺の実寸（cm）。散乱の距離（cm）を画面上の大きさに直すのに使う / ' +
-        'For the pseudo SSS: real size (cm) of the model\'s largest dimension; converts the scatter radius (cm) to screen size.',
+      '疑似 SSS・Glazing 用: モデルの最大の辺の実寸（cm）。散乱の距離（cm）を画面上の大きさに直すのに使う / ' +
+        'For the pseudo SSS and the glazing blur: real size (cm) of the model\'s largest dimension; converts their distances (cm) to screen size.',
     );
     const occlusionSelect = selectControl(
       'Occlusion',
@@ -1125,6 +1208,12 @@ export class LitObjectView extends BaseView {
       if (!row) continue;
       for (const input of row.querySelectorAll('input')) input.disabled = !available;
       row.classList.toggle('ctl-disabled', !available);
+    }
+    const glazingRow = this.footer.querySelector<HTMLElement>('[data-testid="ctl-glazing"]');
+    if (glazingRow) {
+      const glazingAvailable = this.glazingAvailable();
+      for (const input of glazingRow.querySelectorAll('input')) input.disabled = !glazingAvailable;
+      glazingRow.classList.toggle('ctl-disabled', !glazingAvailable);
     }
   }
 

@@ -9,7 +9,8 @@ import type { BrdfDef, BrdfInstance, TextureImage } from '../brdf/types.js';
 /**
  * Texture units: 0 measured data, 1-3 Lit Object environment, 4 normal map,
  * 5-12 parameter images, 13 display tone map tables (src/gl/tonemap.ts),
- * 14-15 Lit Object occlusion BVH (nodes, triangles).
+ * 14-15 Lit Object occlusion BVH (nodes, triangles),
+ * 16-18 Lit Object glazing G-buffer (src/gl/glazing.ts).
  */
 export const NORMAL_MAP_UNIT = 4;
 export const BVH_NODE_UNIT = 14;
