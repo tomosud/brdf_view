@@ -80,7 +80,8 @@ capture.bat --batch jobs.json
 - 見本の `×` で外せます。
 - 効くのは Lit Object だけです。プロット・スライス・Lit Sphere は、これまでどおりスライダーの値と幾何の法線を使います。
 - UV を持つモデル（`dm`、`teapot`、`myaku`、内蔵の `sphere`）で使えます。タンジェントは UV から計算します。
-- 画像は共有 URL や状態 JSON には入りません（状態 JSON には、ファイル名・チャンネル・色空間などが参考として出ます）。画像を貼っている間は、アドレスバーの URL を更新しません。再読み込みすると外れます。
+- 貼った画像は、ブラウザの IndexedDB に保存され、再読み込みしても残ります（チャンネル・色空間・DX・強さも含む）。URL 付きで開いたときも、同じ BRDF（同じファイル）に保存してある画像を貼り直します。
+- 画像は共有 URL や状態 JSON には入りません（状態 JSON には、ファイル名・チャンネル・色空間などが参考として出ます）。別の PC やブラウザにリンクを渡しても、画像は付きません。
 - スクリプトからは `brdfView.setTexture('roughness', url, { channel: 'g' })`・`brdfView.setNormalMap(url)`、コマンドラインからは `--texture roughness:g=orm.png`・`--normal-map normal.png`。
 
 ## パラメータのコメント（ツールチップ）
