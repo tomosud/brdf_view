@@ -29,7 +29,8 @@ BRDF Explorer Web を、人の手を介さずに操作するための入口は 3
   "slice":     { "mode": "image", "phiD": 90, "gamma": 2.2, "exposure": 0, "height": 0.065,
                  "squareThetaH": false, "showChroma": false, "surfaceZoom": 1 },
   "litObject": { "env": "ibl.hdr", "object": "sphere", "ibl": true, "samples": 128, "gamma": 2.2, "exposure": 0,
-                 "hideBackground": false, "grayIBL": false, "occlusion": "sh", "camera": { "theta": 68.75, "phi": 34.38, "zoom": 1 } },
+                 "hideBackground": false, "grayIBL": false, "occlusion": "sh", "sss": false, "sizeCm": 20,
+                 "camera": { "theta": 68.75, "phi": 34.38, "zoom": 1 } },
   "litSphere": { "brightness": 1, "gamma": 2.2, "exposure": 0, "doubleTheta": true, "nDotL": true }
 }
 ```
@@ -47,6 +48,8 @@ BRDF Explorer Web を、人の手を介さずに操作するための入口は 3
 | `litObject.ibl` | `true` = HDRI による IBL（従来の表示）。`false` = 入射光の角度からの平行光 1 つ（新しく UI にも「IBL」チェックを追加） |
 | `litObject.samples` | IBL の 1 パスあたりのサンプル数（既定 128） |
 | `litObject.occlusion` | IBL でのモデル自身による遮蔽（UI の「Occlusion」）。`"off"`（なし）、`"sh"`（既定。読み込み時に頂点ごとに事前計算した近似）、`"ray"`（サンプルごとに影のレイを飛ばす正確な判定。重く、収束に時間がかかる）。以前の形式の `true` は `"sh"`、`false` は `"off"` として読む。平行光（`ibl: false`）には効かない |
+| `litObject.sss` | 疑似 SSS（UI の「SSS」、`data-testid="ctl-sss"`、既定 `false`）。拡散光だけを画面上でぼかす。独自実装・近似。対応する `.brdf`（`BRDF_sss_diffuse` を持つもの。今は `callisto_*`）でだけ効き、ほかでは無視される。値は `.brdf` の `sss_*` パラメータ。[pseudo_sss.md](pseudo_sss.md) |
+| `litObject.sizeCm` | モデルの最大の辺の実寸（cm、UI の「Size (cm)」、`ctl-size-cm`）。疑似 SSS の距離（cm）を画面上の大きさに直すのに使う。`object` を変えると、そのモデルの既定値（`dm.obj` は 30.17、ほかは 20）に戻る。`object` と一緒に書いた場合は、書いた値が優先 |
 
 `setState` の決まり:
 
@@ -95,7 +98,7 @@ https://tomosud.github.io/brdf_view/#v=1&brdfs.0.file=callisto_brdf.brdf&brdfs.0
 | `setNormalMap(src, { brdf, fileName, flipY, strength })` | BRDF にタンジェント空間のノーマルマップを貼る（Lit Object のみ。既定は DirectX 形式 `flipY: true`、OpenGL 形式なら `flipY: false`。`strength` は XY の倍率、既定 1）。`null` で外す |
 | `listViews()` | `{ views, dataViews, environments, objects }` |
 | `render(view, { width, height, frames, supersample, background })` | PNG の data URL（表示用の画像。露出・ガンマ込み）。指定サイズで 1 回だけ描く（DPR・ウィンドウの大きさに依存しない。UI は写らない）。`litObject` の IBL は `frames` 回（既定 512 = 画面で収束する回数）積算してから返す。`occlusion: "ray"` では 1 回分を数フレームに分けて描く（サンプル数は同じ。GPU のタイムアウト対策）ので、時間は数十倍かかる（512×512、RTX 5090 で 15〜80 秒程度）。`supersample: n`（1〜8、既定 1）で n 倍の大きさに描いてリニアで縮小する（アンチエイリアス）。`background` は `'view'`（既定、ビュー本来の背景）、`'transparent'`（アルファ付き）、sRGB の `[r, g, b]`（`litObject` / `litSphere` のみ） |
-| `evaluate(input, { brdf, params })` | BRDF の生の値（RGB）。`input` は `{ L, V, N?, X?, Y? }`（ベクトル）か `{ thetaL, phiL, thetaV, phiV }`（度。N/X/Y 基準）。配列を渡すと配列で返す。`params` は一時的な上書きで、状態は変えない |
+| `evaluate(input, { brdf, params, component })` | BRDF の生の値（RGB）。`input` は `{ L, V, N?, X?, Y? }`（ベクトル）か `{ thetaL, phiL, thetaV, phiV }`（度。N/X/Y 基準）。配列を渡すと配列で返す。`params` は一時的な上書きで、状態は変えない。`component` は既定 `'brdf'`（`BRDF()`）。`'sssDiffuse'` / `'sssAlbedo'` で、疑似 SSS のフック関数（`BRDF_sss_diffuse` / `BRDF_sss_albedo`）の値を返す（フックを持たない `.brdf` ではエラー） |
 | `exportData(view, { format, resolution })` | プロットやスライスの数値。`format: 'csv'` で CSV 文字列、既定は JSON オブジェクト |
 | `errors()` | シェーダのコンパイル・リンクのエラー |
 
@@ -108,6 +111,7 @@ https://tomosud.github.io/brdf_view/#v=1&brdfs.0.file=callisto_brdf.brdf&brdfs.0
 - 表示用と同じ `.brdf` の GLSL を、専用のオフスクリーン WebGL2 で評価する（float32、RGBA32F で読み戻し）
 - 値は `BRDF(L, V, N, X, Y)` の返り値そのもの。0 未満の切り捨て、N·L、露出、log は掛けない
 - 既定の局所座標は `N = (0,0,1)`、`X = (1,0,0)`、`Y = (0,1,0)`。ベクトルは正規化してから渡す
+- 疑似 SSS（`litObject.sss`）は含まない。SSS は Lit Object の画像にだけ入る
 
 ```js
 await brdfView.evaluate({ thetaL: 60, phiL: 0, thetaV: 30, phiV: 180 });            // [r, g, b]
@@ -169,7 +173,7 @@ capture.bat --brdf callisto_brdf.brdf --set roughness=0.3 --save-state state.jso
 | `--background <bg>` | `view`（既定）/ `transparent` / `r,g,b`（sRGB 0〜1）。`litObject` / `litSphere` のみ |
 | `--figure` | 文書用の見本画像のプリセット。`--supersample 4`、`litObject` / `litSphere` は背景を透過（明示した値が優先） |
 | `--data` / `--data-view` / `--resolution` | `exportData` の保存先（`.csv` なら CSV、ほかは JSON）、対象ビュー、分割数 |
-| `--eval` / `--eval-out` | 評価する点の JSON（配列、または `{ "samples": [...], "brdf": ..., "params": {...} }`）と結果の保存先（省略時は標準出力） |
+| `--eval` / `--eval-out` | 評価する点の JSON（配列、または `{ "samples": [...], "brdf": ..., "params": {...}, "component": "brdf" }`）と結果の保存先（省略時は標準出力） |
 | `--save-state` / `--print-link` | 状態 JSON の保存、共有 URL の出力 |
 | `--batch` | 複数のジョブを 1 つのブラウザで実行（下記） |
 
@@ -191,7 +195,7 @@ capture.bat --brdf callisto_brdf.brdf --set roughness=0.3 --save-state state.jso
 }
 ```
 
-`set` と `opt` は、配列（`["roughness=0.4"]`）でもオブジェクト（`{ "roughness": 0.4 }`）でもよい。`state` はファイル名でも JSON オブジェクトでもよい。
+`set` と `opt` は、配列（`["roughness=0.4"]`）でもオブジェクト（`{ "roughness": 0.4 }`）でもよい。`state` はファイル名でも JSON オブジェクトでもよい。`defaults` とジョブは浅く重ねる。ジョブに `opt`（や `set`）を書くと `defaults` の `opt` を丸ごと置き換えるので、共通の値もジョブ側に書く。
 
 ## 5. 再現性と座標の注意
 
@@ -223,6 +227,7 @@ UI を直接操作するとき（Playwright のロケータなど）に使う。
 ## 7. 互換性
 
 - 既存の `.brdf` の読み方は変えていない。評価用のシェーダ雛形 `evaluate.frag` も、表示用と同じ差し込み（`::INSERT_UNIFORMS_HERE::` など）を使う
+- `litObject.sss` と `litObject.sizeCm` は 2026-10-01 に追加。書かなければ `sss` は `false` のままなので、以前の状態や URL は同じ画像になる。`callisto_*.brdf` に `sss_*` パラメータが増えたが、状態に書かれていなければ `.brdf` の既定値が使われる
 - 状態の形式を互換性の無い形で変えるときは `v` を上げ、古い `v=1` の読み込みを残す
 - GitHub Pages では URL と JS API が動く。コマンドラインはローカル専用（静的サイトにはサーバ機能を足していない）
 

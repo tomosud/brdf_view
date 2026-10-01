@@ -55,7 +55,8 @@ Outputs:
   --data-view <name>     slice, polar, cartesian or plot3d
   --resolution <n>       Samples per axis for --data
   --eval <file.json>     Evaluate samples: [{L,V,N?,X?,Y?} | {thetaL,phiL,thetaV,phiV}, ...]
-                         or {"samples": [...], "brdf": ..., "params": {...}}
+                         or {"samples": [...], "brdf": ..., "params": {...},
+                             "component": "brdf" | "sssDiffuse" | "sssAlbedo"}
   --eval-out <file>      Where to write the evaluation JSON (default: stdout)
   --save-state <file>    Write the resolved state JSON
   --print-link           Print the shareable link of the resolved state
@@ -395,7 +396,7 @@ async function runJob(context, baseUrl, job, index, total) {
     if (job.eval) {
       const spec = Array.isArray(job.eval) ? { samples: job.eval } : job.eval;
       const result = await page.evaluate(
-        ([s]) => window.brdfView.evaluate(s.samples, { brdf: s.brdf, params: s.params }),
+        ([s]) => window.brdfView.evaluate(s.samples, { brdf: s.brdf, params: s.params, component: s.component }),
         [spec],
       );
       const text = `${JSON.stringify({ samples: spec.samples, rgb: result }, null, 1)}\n`;

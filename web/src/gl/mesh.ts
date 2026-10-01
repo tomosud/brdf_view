@@ -61,6 +61,12 @@ export interface IndexedMesh {
   /** Tangents (xyz + handedness w) along +u, for normal maps. Needs uvs. */
   tangents?: Float32Array;
   indices: Uint32Array;
+  /**
+   * Real size in cm of the mesh's largest dimension, when the source states its
+   * unit (an OBJ comment saying it uses centimeters). OBJ meshes are rescaled so
+   * that this dimension becomes 2 scene units. Used by the pseudo SSS.
+   */
+  sourceSizeCm?: number;
 }
 
 /**
@@ -154,13 +160,16 @@ export function parseObjMesh(text: string): IndexedMesh {
     }
   }
 
-  normalizePositions(positions);
+  const sourceExtent = normalizePositions(positions);
   const finalNormals = srcNormals.length ? normals : computeVertexNormals(positions, indices);
+  // e.g. Maya: "# This file uses centimeters as units for non-parametric coordinates."
+  const inCentimeters = /^#.*\bcentimeters as units\b/im.test(text.slice(0, 2000));
   return {
     positions: new Float32Array(positions),
     normals: new Float32Array(finalNormals),
     ...(srcUvs.length ? { uvs: new Float32Array(uvs) } : {}),
     indices: new Uint32Array(indices),
+    ...(inCentimeters && sourceExtent > 0 ? { sourceSizeCm: sourceExtent } : {}),
   };
 }
 
@@ -210,8 +219,9 @@ export function computeTangents(mesh: IndexedMesh): Float32Array | undefined {
   return out;
 }
 
-function normalizePositions(positions: number[]): void {
-  if (!positions.length) return;
+/** Centre the mesh and scale its largest dimension to 2. Returns that dimension before scaling. */
+function normalizePositions(positions: number[]): number {
+  if (!positions.length) return 0;
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
   for (let i = 0; i < positions.length; i += 3) {
@@ -222,12 +232,14 @@ function normalizePositions(positions: number[]): void {
   const cx = (minX + maxX) * 0.5;
   const cy = (minY + maxY) * 0.5;
   const cz = (minZ + maxZ) * 0.5;
-  const scale = 2 / Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6);
+  const extent = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1e-6);
+  const scale = 2 / extent;
   for (let i = 0; i < positions.length; i += 3) {
     positions[i] = (positions[i] - cx) * scale;
     positions[i + 1] = (positions[i + 1] - cy) * scale;
     positions[i + 2] = (positions[i + 2] - cz) * scale;
   }
+  return extent;
 }
 
 function computeVertexNormals(positions: number[], indices: number[]): number[] {

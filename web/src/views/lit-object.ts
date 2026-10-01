@@ -17,6 +17,7 @@ import { bakeOcclusionSH, OCCLUSION_SH_COEFFS } from '../gl/visibility-bake.js';
 import { BVH_TEXTURE_WIDTH, buildBvhAsync, type PackedBvh } from '../gl/bvh.js';
 import { perspective, lookAt, DEG2RAD } from '../gl/mat4.js';
 import { TONEMAP_GLSL, ToneMapper } from '../gl/tonemap.js';
+import { SssPipeline, sssDefines, sssParamsOf, sssSupport } from '../gl/sss.js';
 import { boolControl, floatControl, selectControl } from '../ui/controls.js';
 import { parseHdr } from '../io/hdr.js';
 import type { HdrImage } from '../io/hdr.js';
@@ -38,6 +39,12 @@ const RAY_PIXEL_BUDGET = 512 * 512;
 const RAY_MAX_STEPS_PER_DRAW = 16;
 /** Shadow-ray origin offset, relative to the mesh radius. */
 const RAY_EPSILON = 1e-4;
+/** Every mesh is scaled so that its largest dimension spans this many scene units. */
+const MESH_EXTENT = 2;
+/** Pseudo SSS: real size (cm) of the largest dimension when the mesh does not state one. */
+const DEFAULT_SIZE_CM = 20;
+const MIN_SIZE_CM = 0.1;
+const MAX_SIZE_CM = 1000;
 
 /** Lit Object self-occlusion: none, baked SH, or ray traced against a BVH. */
 export type OcclusionMode = 'off' | 'sh' | 'ray';
@@ -102,6 +109,16 @@ export class LitObjectView extends BaseView {
   private hideBackground = false;
   private grayscaleIBL = false;
   private occlusion: OcclusionMode = 'sh';
+  /**
+   * Pseudo SSS (src/gl/sss.ts): blur the diffuse light in screen space. Only
+   * drawn for a .brdf that declares the hook functions; otherwise ignored.
+   */
+  private sssEnabled = false;
+  /** Real size (cm) of the mesh's largest dimension: converts the SSS radius (cm) to scene units. */
+  private sizeCm = DEFAULT_SIZE_CM;
+  /** Size the current mesh suggests (its own unit, or DEFAULT_SIZE_CM). */
+  private meshSizeCm = DEFAULT_SIZE_CM;
+  private sss: SssPipeline | null = null;
   private envName = '';
   private envSelectButton: HTMLButtonElement | null = null;
   private envSelectText: HTMLElement | null = null;
@@ -161,6 +178,7 @@ export class LitObjectView extends BaseView {
     // is unused by the shader, so light drags neither reset the converged
     // result nor trigger a re-render of the Monte-Carlo scene pass.
     this.resetUnsub = store.subscribe(() => {
+      this.syncSssControls();
       const sig = this.storeSignature();
       if (sig === this.lastStoreSig) return;
       this.lastStoreSig = sig;
@@ -188,6 +206,8 @@ export class LitObjectView extends BaseView {
       hideBackground: this.hideBackground,
       grayIBL: this.grayscaleIBL,
       occlusion: this.occlusion,
+      sss: this.sssEnabled,
+      sizeCm: round6(this.sizeCm),
       camera: {
         theta: round6(this.lookTheta * RAD2DEG),
         phi: round6(this.lookPhi * RAD2DEG),
@@ -216,6 +236,7 @@ export class LitObjectView extends BaseView {
     this.hideBackground = bool(s, 'hideBackground') ?? this.hideBackground;
     this.grayscaleIBL = bool(s, 'grayIBL') ?? this.grayscaleIBL;
     this.occlusion = parseOcclusion(s.occlusion) ?? this.occlusion;
+    this.sssEnabled = bool(s, 'sss') ?? this.sssEnabled;
     const cam = obj(s, 'camera');
     const theta = num(cam, 'theta');
     const phi = num(cam, 'phi');
@@ -223,6 +244,9 @@ export class LitObjectView extends BaseView {
     if (phi !== undefined) this.lookPhi = phi * DEG2RAD_;
     this.lookZoom = Math.max(0.2, Math.min(5, num(cam, 'zoom') ?? this.lookZoom));
     await Promise.all(loads);
+    // after the object load: loading a mesh resets the size to that mesh's own
+    const sizeCm = num(s, 'sizeCm');
+    if (sizeCm !== undefined) this.sizeCm = clampSize(sizeCm);
     if (this.occlusion === 'ray') void this.ensureBvh();
     this.closeEnvironmentMenu();
     this.footer.replaceChildren();
@@ -344,6 +368,41 @@ export class LitObjectView extends BaseView {
     };
   }
 
+  /** Whether the pseudo SSS can be drawn at all for the BRDF on display (drives the checkbox). */
+  private sssAvailable(): boolean {
+    const pkg = this.store.topmostEnabled();
+    return this.floatRenderTargets && !!pkg && sssSupport(pkg.instance.def).diffuse;
+  }
+
+  /**
+   * The pseudo-SSS pipeline for this frame, or null for the regular path.
+   * Switching between the two restarts the accumulation (separate targets).
+   */
+  private activeSss(w: number, h: number): SssPipeline | null {
+    const active = this.sssEnabled && this.sssAvailable();
+    if (active !== this.sssWasActive) {
+      this.sssWasActive = active;
+      this.accumFrame = 0;
+      this.accumRead = 0;
+    }
+    if (!active) return null;
+    this.sss ??= new SssPipeline(this.gl);
+    if (this.sss.ensure(w, h)) this.accumFrame = 0;
+    return this.sss;
+  }
+  private sssWasActive = false;
+
+  /** Blur the diffuse and recombine; returns the texture to present. */
+  private resolveSss(sss: SssPipeline, source: 'scene' | 'accum', cam: ReturnType<LitObjectView['camera']>, h: number, converged: boolean): WebGLTexture {
+    const pkg = this.store.topmostEnabled()!;
+    return sss.resolve(source, {
+      params: sssParamsOf(pkg.instance),
+      cmPerUnit: this.sizeCm / MESH_EXTENT,
+      pixelsPerUnitAtDepth1: 0.5 * h * cam.proj[5],
+      subSteps: converged || this.inSnapshot ? 8 : 4,
+    });
+  }
+
   protected draw(): void {
     const w = this.canvas.width;
     const h = this.canvas.height;
@@ -354,34 +413,56 @@ export class LitObjectView extends BaseView {
     if (!this.sceneTarget || !this.accumTargets) {
       return;
     }
+    const sss = this.activeSss(w, h);
 
     if (!this.renderWithIBL) {
-      this.drawScene(cam, this.sceneTarget.framebuffer, w, h);
-      this.drawTextureToScreen(this.sceneTarget.texture, w, h);
+      if (sss) {
+        this.drawScene(cam, null, w, h, sss);
+        this.drawTextureToScreen(this.resolveSss(sss, 'scene', cam, h, true), w, h);
+      } else {
+        this.drawScene(cam, this.sceneTarget.framebuffer, w, h);
+        this.drawTextureToScreen(this.sceneTarget.texture, w, h);
+      }
       this.updateAccumStatus(0);
       return;
     }
+
+    const present = (converged: boolean) =>
+      this.drawTextureToScreen(sss ? this.resolveSss(sss, 'accum', cam, h, converged) : this.accumTargets![this.accumRead].texture, w, h);
 
     // Converged: re-present the accumulated image (applies current
     // gamma/exposure) without paying for another Monte-Carlo scene pass.
     const maxFrames = this.maxAccumFrames();
     if (this.accumFrame >= maxFrames) {
-      this.drawTextureToScreen(this.accumTargets[this.accumRead].texture, w, h);
+      present(true);
       this.updateAccumStatus(this.accumFrame);
       return;
     }
 
     const steps = this.accumStepsThisDraw();
-    for (let i = 0; i < steps && this.accumFrame < maxFrames; i++) this.accumulateFrame(cam, w, h, maxFrames);
-    this.drawTextureToScreen(this.accumTargets[this.accumRead].texture, w, h);
+    for (let i = 0; i < steps && this.accumFrame < maxFrames; i++) this.accumulateFrame(cam, w, h, maxFrames, sss);
+    present(this.accumFrame >= maxFrames);
     this.updateAccumStatus(this.accumFrame);
     if (this.accumFrame < maxFrames) this.requestRender();
   }
 
   /** Draw one Monte-Carlo frame and fold it into the running average. */
-  private accumulateFrame(cam: ReturnType<LitObjectView['camera']>, w: number, h: number, maxFrames: number): void {
+  private accumulateFrame(
+    cam: ReturnType<LitObjectView['camera']>,
+    w: number,
+    h: number,
+    maxFrames: number,
+    sss: SssPipeline | null = null,
+  ): void {
     const gl = this.gl;
     if (!this.sceneTarget || !this.accumTargets) return;
+    if (sss) {
+      // pseudo SSS: same running average, over the pipeline's three targets
+      this.drawScene(cam, null, w, h, sss);
+      sss.accumulate(this.accumFrame);
+      this.accumFrame = Math.min(this.accumFrame + 1, maxFrames);
+      return;
+    }
     this.drawScene(cam, this.sceneTarget.framebuffer, w, h);
 
     const write = this.accumRead === 0 ? 1 : 0;
@@ -406,13 +487,29 @@ export class LitObjectView extends BaseView {
     this.accumFrame = Math.min(this.accumFrame + 1, maxFrames);
   }
 
-  private drawScene(cam: ReturnType<LitObjectView['camera']>, framebuffer: WebGLFramebuffer | null, w: number, h: number): void {
+  /**
+   * Draw background and object into `framebuffer`, or (pseudo SSS) into the
+   * three targets of `sss`: the background then goes to the specular target only
+   * and the object uses the BRDF_SSS shader variant.
+   */
+  private drawScene(
+    cam: ReturnType<LitObjectView['camera']>,
+    framebuffer: WebGLFramebuffer | null,
+    w: number,
+    h: number,
+    sss: SssPipeline | null = null,
+  ): void {
     const gl = this.gl;
     if (!this.bg) return;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    gl.viewport(0, 0, w, h);
-    gl.clearColor(0, 0, 0, this.snapshotClearAlpha ? 0 : 1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    if (sss) {
+      sss.beginScene(this.snapshotClearAlpha ? 0 : 1);
+      sss.selectSceneOutputs(true);
+    } else {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.viewport(0, 0, w, h);
+      gl.clearColor(0, 0, 0, this.snapshotClearAlpha ? 0 : 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    }
     // background (env), behind everything; skipped (alpha 0) for a snapshot
     // with a transparent / solid background
     gl.disable(gl.DEPTH_TEST);
@@ -436,12 +533,13 @@ export class LitObjectView extends BaseView {
     // object
     gl.depthMask(true);
     gl.enable(gl.DEPTH_TEST);
+    sss?.selectSceneOutputs(false);
     const pkg = this.store.topmostEnabled();
     if (!pkg) return;
     const textured = textureBindings(pkg.instance);
     const normalMap = pkg.instance.normalMap;
     if ((textured.length || normalMap) && !this.meshHasUVs) this.warnNoUVs();
-    const prog = this.cache.get(pkg.instance.def, textured);
+    const prog = this.cache.get(pkg.instance.def, textured, sss ? sssDefines(pkg.instance.def) : '');
     if (!prog) return;
 
     const s = this.store.state;
@@ -454,6 +552,7 @@ export class LitObjectView extends BaseView {
     prog.u.m4('projectionMatrix', cam.proj);
     prog.u.m4('viewMatrix', cam.view);
     prog.u.v3('cameraPos', ...cam.eye);
+    if (sss) prog.u.v3('sssCamForward', ...cam.camForward);
     prog.u.v3('incidentVector', iv[0], iv[1], iv[2]);
     prog.u.f('useNDotL', s.useNDotL ? 1 : 0);
     prog.u.f('renderWithIBL', this.renderWithIBL ? 1 : 0);
@@ -612,6 +711,7 @@ export class LitObjectView extends BaseView {
     super.dispose();
     this.closeEnvironmentMenu();
     this.resetUnsub?.();
+    this.sss?.dispose();
   }
 
   private setMesh(mesh: IndexedMesh): void {
@@ -624,6 +724,9 @@ export class LitObjectView extends BaseView {
       radius = Math.max(radius, Math.hypot(mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]));
     }
     this.meshRadius = radius || 1;
+    // a new mesh brings its own real size (pseudo SSS); applyViewState may override it afterwards
+    this.meshSizeCm = clampSize(mesh.sourceSizeCm ?? DEFAULT_SIZE_CM);
+    this.sizeCm = this.meshSizeCm;
     this.indexCount = mesh.indices.length;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posVBO);
     gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STATIC_DRAW);
@@ -749,9 +852,16 @@ export class LitObjectView extends BaseView {
   }
 
   private async loadObjectNow(name: string): Promise<void> {
+    // setMesh changes the size shown in the controls
+    const refreshControls = () => {
+      this.closeEnvironmentMenu();
+      this.footer.replaceChildren();
+      this.buildControls();
+    };
     if (name === 'sphere') {
       this.meshName = name;
       this.setMesh(buildSphere(1.0, 100, 100));
+      refreshControls();
       this.resetAccumulation();
       return;
     }
@@ -760,6 +870,7 @@ export class LitObjectView extends BaseView {
       if (!res.ok) throw new Error(`${res.status}`);
       this.meshName = name;
       this.setMesh(parseObjMesh(await res.text()));
+      refreshControls();
       this.resetAccumulation();
     } catch (e) {
       console.error(`Failed to load object ${name}`, e);
@@ -788,6 +899,29 @@ export class LitObjectView extends BaseView {
         this.grayscaleIBL = v;
         this.resetAccumulation();
       }),
+      boolControl(
+        'SSS',
+        this.sssEnabled,
+        (v) => {
+          this.sssEnabled = v;
+          this.resetAccumulation();
+        },
+        '疑似 SSS（独自実装・近似）: 拡散光だけを画面上でぼかす表面下散乱。sss_ で始まるパラメータで調整。対応する .brdf（BRDF_sss_diffuse を持つもの）でのみ有効 / ' +
+          'Pseudo SSS (custom approximation): screen-space subsurface scattering that blurs only the diffuse light; tuned by the sss_ parameters. Only for a .brdf that declares BRDF_sss_diffuse.',
+      ),
+    );
+    const sizeControl = floatControl(
+      'Size (cm)',
+      this.sizeCm,
+      1,
+      100,
+      this.meshSizeCm,
+      (v) => {
+        this.sizeCm = clampSize(v);
+        this.requestRender();
+      },
+      '疑似 SSS 用: モデルの最大の辺の実寸（cm）。散乱の距離（cm）を画面上の大きさに直すのに使う / ' +
+        'For the pseudo SSS: real size (cm) of the model\'s largest dimension; converts the scatter radius (cm) to screen size.',
     );
     const occlusionSelect = selectControl(
       'Occlusion',
@@ -819,6 +953,7 @@ export class LitObjectView extends BaseView {
       ),
       iblChecks,
       occlusionSelect,
+      sizeControl,
       floatControl('Gamma', this.gamma, 0.1, 5, 2.2, (v) => {
         this.gamma = v;
         this.requestRender();
@@ -829,6 +964,18 @@ export class LitObjectView extends BaseView {
       }),
     );
     this.syncToneMapControls();
+    this.syncSssControls();
+  }
+
+  /** The SSS checkbox and the size are only usable with a .brdf that supports the pseudo SSS. */
+  private syncSssControls(): void {
+    const available = this.sssAvailable();
+    for (const id of ['ctl-sss', 'ctl-size-cm']) {
+      const row = this.footer.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+      if (!row) continue;
+      for (const input of row.querySelectorAll('input')) input.disabled = !available;
+      row.classList.toggle('ctl-disabled', !available);
+    }
   }
 
   private buildEnvironmentSelect(): HTMLElement {
@@ -1056,6 +1203,10 @@ export class LitObjectView extends BaseView {
       this.resetAccumulation();
     });
   }
+}
+
+function clampSize(cm: number): number {
+  return Math.max(MIN_SIZE_CM, Math.min(MAX_SIZE_CM, cm));
 }
 
 /** "off" / "sh" / "ray"; older states store a boolean (true = SH, false = off). */

@@ -104,14 +104,23 @@ export function escapeBuiltinFunctionRedeclarations(src: string): string {
 /**
  * `bindings` (Lit Object only): parameters read from images. The template must
  * then provide `in vec2 vUV` and the ::INSERT_TEXTURE_FETCH_HERE:: marker.
+ * `defines`: preprocessor lines for templates with ::INSERT_DEFINES_HERE::
+ * (optional shader variants such as the pseudo SSS, src/gl/sss.ts).
  */
-export function injectTemplate(template: string, def: BrdfDef, bindings: readonly TextureBinding[] = []): string {
+export function injectTemplate(
+  template: string,
+  def: BrdfDef,
+  bindings: readonly TextureBinding[] = [],
+  defines = '',
+): string {
   const uniforms = uniformDecls(def.params, bindings);
   const compat = (s: string) => escapeBuiltinFunctionRedeclarations(s);
   const promote = (s: string) => (def.noPromote ? compat(s) : promoteIntLiterals(compat(s)));
   const brdf = `\n${promote(def.shaderSource)}\n`;
   const isFunc = def.isFuncSource ? `\n${promote(def.isFuncSource)}\n` : '';
   return template
+    .split('::INSERT_DEFINES_HERE::')
+    .join(defines)
     .split('::INSERT_UNIFORMS_HERE::')
     .join(uniforms)
     .split('::INSERT_BRDF_FUNCTION_HERE::')

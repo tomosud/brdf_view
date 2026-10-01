@@ -4,9 +4,18 @@
 // is written to one RGBA32F texel (raw BRDF RGB, no clamping or tone mapping).
 
 import { BrdfProgramCache } from '../gl/brdf-program.js';
+import { sssDefines, sssSupport } from '../gl/sss.js';
 import type { BrdfInstance } from '../brdf/types.js';
 
 export type Vec3 = [number, number, number];
+
+/**
+ * What to evaluate: BRDF() itself, or one of the optional pseudo-SSS hook
+ * functions (src/gl/sss.ts): BRDF_sss_diffuse (diffuse term without albedo) or
+ * BRDF_sss_albedo (1 when the .brdf does not declare it).
+ */
+export type EvalComponent = 'brdf' | 'sssDiffuse' | 'sssAlbedo';
+const COMPONENT_INDEX: Record<EvalComponent, number> = { brdf: 0, sssDiffuse: 1, sssAlbedo: 2 };
 
 /** One evaluation point. N/X/Y default to the views' local frame (0,0,1)/(1,0,0)/(0,1,0). */
 export interface EvalSample {
@@ -43,10 +52,17 @@ export class BrdfEvaluator {
   }
 
   /** Evaluate BRDF(L, V, N, X, Y) for every sample. Returns packed RGB (3 floats per sample). */
-  async evaluate(inst: BrdfInstance, samples: EvalSample[]): Promise<Float32Array> {
+  async evaluate(inst: BrdfInstance, samples: EvalSample[], component: EvalComponent = 'brdf'): Promise<Float32Array> {
     await this.cache.ready;
-    const prog = this.cache.get(inst.def);
+    if (!(component in COMPONENT_INDEX)) throw new Error(`evaluate: unknown component "${component}"`);
+    if (component !== 'brdf' && !sssSupport(inst.def).diffuse) {
+      throw new Error(`evaluate: "${inst.def.name}" does not declare BRDF_sss_diffuse (component "${component}")`);
+    }
+    // BRDF() itself uses the plain shader; the hooks need the SSS variant.
+    const prog = this.cache.get(inst.def, [], component === 'brdf' ? '' : sssDefines(inst.def));
     if (!prog) throw new Error(`evaluate: shader for "${inst.def.name}" failed to compile (see errors())`);
+    this.gl.useProgram(prog.program);
+    prog.u.i('evalComponent', COMPONENT_INDEX[component]);
     const out = new Float32Array(samples.length * 3);
     // Keep the input texture height (5 blocks of `rows`) within MAX_TEXTURE_SIZE.
     const width = this.maxTex;

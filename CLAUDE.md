@@ -50,6 +50,14 @@ npm run build
 - Keep the format backward compatible: unknown keys are ignored, and a breaking change bumps `v` while still reading `v=1`.
 - Keep `data-testid` values stable; they are part of the automation interface.
 
+## Pseudo SSS (Lit Object)
+
+- Lit Object can blur the diffuse light in screen space ("SSS" checkbox, state `litObject.sss`, off by default). It is a custom approximation and must be described as such in the UI text, `.brdf` headers and docs. Read `docs/pseudo_sss.md` before changing it.
+- Everything specific to the feature lives in `web/src/gl/sss.ts` (hook detection, parameters, kernel, render targets and passes). `iblObject.frag` only differs inside `#ifdef BRDF_SSS`; `lit-object.ts` only chooses the path. With SSS off, or a `.brdf` without the hooks, the regular shader and targets are used unchanged. Keep it that way: no SSS code in the regular path.
+- A `.brdf` opts in by declaring `vec3 BRDF_sss_diffuse(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y)` (diffuse term without albedo) and optionally `vec3 BRDF_sss_albedo()`, with the contract `BRDF() == BRDF_sss_diffuse() * BRDF_sss_albedo() + specular`. Values come from the optional float parameters `sss_strength`, `sss_scatter_radius`, `sss_falloff_r/g/b`, `sss_subsurface_r/g/b`.
+- After changing the feature or adding the hooks to a `.brdf`, run `python scripts/verify_sss.py` (hook contract and filter against a Python reference) and, for the Callisto files, `python scripts/gen_callisto_presets.py` then `python scripts/verify_callisto_brdf.py`.
+- `evaluate`, the plots, Image Slice and Lit Sphere never include the SSS.
+
 ## GitHub Pages
 
 - `.github/workflows/pages.yml` runs on pushes to `main` and on manual dispatch.

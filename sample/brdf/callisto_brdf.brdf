@@ -13,11 +13,17 @@ analytic
 # tinted second lobe F0, Specular Fresnel Falloff and per-channel Specular Smooth
 # Terminator. "advanced_strength" = 0 gives the plain UE4 SubsurfaceProfile BRDF.
 #
-# Not included (renderer side): subsurface scattering / transmission, the
+# Not included (renderer side): transmission, the
 # SubsurfaceProfile texture and GBuffer packing, Dual Normal (a single N is used
 # for diffuse and specular), Specular Glazing Blur (screen-space stochastic
 # neighbour normal/shadow), area-light GGX normalization, shadows, Realis.
 # Returns the BRDF value without the NoL factor, like the other samples.
+#
+# Subsurface scattering is not part of BRDF(). The viewer's pseudo SSS (Lit Object,
+# "SSS" checkbox, off by default; a custom screen-space approximation, see
+# docs/pseudo_sss.md) uses the two hook functions BRDF_sss_diffuse / BRDF_sss_albedo
+# below and the sss_* parameters (profile ScatterRadius, FalloffColor, SubsurfaceColor).
+# The plots, Image Slice, Lit Sphere and evaluate() never include it.
 #
 # Defaults: Jacob head profile (SP_Jacob_Head). Other shipped profiles:
 #   generic skin (SSP_HumanSkin): r0 0.44, lobe_mix 0.95, dual tint (0.464,1,0.91),
@@ -29,6 +35,9 @@ analytic
 #   prisoner cloth (SP_Player_Jacob_Cloth): r0 1, r1 1, lobe_mix 1,
 #     dual tint (1,0.8,0.1), fresnel_falloff 0.75, SST 0.5 tint (0,0.5,1),
 #     DST 0.5, anti peak (0.5,0.5,0.5) falloff 0.5, diffuse_fresnel_peak 5
+# Pseudo SSS values (scatter radius cm, falloff rgb, subsurface rgb):
+#   generic skin 0.6, (1,0.25,0.05), (1,1,1); eye 0.5, (1,0.65,0.15), (1,1,1);
+#   teeth 1.5, (0.8,0.5,0.25), (1,1,1); prisoner cloth 10, (1,0.35,0), (0.1,0.1,0.1)
 # Neutral values: tints 1, peaks 1, falloffs 1, terminators 0.
 # base_color is sRGB (exact sRGB curve in mon2lin); the *_r/_g/_b tints are linear multipliers
 # taken directly from the game data.
@@ -55,6 +64,14 @@ float anti_spec_peak_r 0.0 9.0 0.5  # 輪郭（N·H→0）で拡散に掛ける�
 float anti_spec_peak_g 0.0 9.0 1.0  # 輪郭で拡散に掛ける色 G / diffuse tint G near N.H->0
 float anti_spec_peak_b 0.0 9.0 0.0  # 輪郭で拡散に掛ける色 B / diffuse tint B near N.H->0
 float anti_spec_peak_falloff 0.01 9.0 0.125  # AntiSpecularPeak の範囲。小さいほど輪郭だけに効く / AntiSpecularPeak falloff; lower = only at the silhouette
+float sss_strength 0.0 1.0 1.0  # 疑似SSS（Lit Object の SSS がオンのとき）: 散乱の強さ。散乱の距離に掛かる。ゲームでは画素ごとの m×Opacity に当たるが、ここでは advanced_strength（m）と独立 / pseudo SSS (Lit Object, SSS on): scatter strength, multiplies the scatter radius. The game uses m x Opacity per pixel; here it is independent of advanced_strength (m)
+float sss_scatter_radius 0.0 20.0 0.5  # 疑似SSS: 散乱が届く距離 cm（SSP ScatterRadius）。Lit Object の Size (cm) で画面上の大きさが決まる / pseudo SSS: scatter reach in cm (SSP ScatterRadius); Lit Object "Size (cm)" sets its size on screen
+float sss_falloff_r 0.0 1.0 1.0  # 疑似SSS: 赤の広がり（SSP FalloffColor R）。小さいほど狭い / pseudo SSS: red spread (SSP FalloffColor R); lower = narrower
+float sss_falloff_g 0.0 1.0 0.25  # 疑似SSS: 緑の広がり（SSP FalloffColor G） / pseudo SSS: green spread (SSP FalloffColor G)
+float sss_falloff_b 0.0 1.0 0.05  # 疑似SSS: 青の広がり（SSP FalloffColor B） / pseudo SSS: blue spread (SSP FalloffColor B)
+float sss_subsurface_r 0.0 1.0 1.0  # 疑似SSS: 散乱した拡散光を混ぜる割合 R（SSP SubsurfaceColor）。0 で散乱なし / pseudo SSS: share of scattered diffuse light, R (SSP SubsurfaceColor); 0 = no scattering
+float sss_subsurface_g 0.0 1.0 1.0  # 疑似SSS: 散乱した拡散光を混ぜる割合 G / pseudo SSS: share of scattered diffuse light, G
+float sss_subsurface_b 0.0 1.0 1.0  # 疑似SSS: 散乱した拡散光を混ぜる割合 B / pseudo SSS: share of scattered diffuse light, B
 ::end parameters
 
 ::begin shader
@@ -100,6 +117,42 @@ vec3 fresnelFalloff(vec3 F0, float VoH, float exponent) {
     return F0 + (vec3(saturate(50.0 * F0[1])) - F0) * Fc;
 }
 
+// Diffuse term without the albedo: Lambert 1/PI times the three Callisto diffuse
+// factors (blended from neutral by advanced_strength).
+vec3 callistoDiffuse(vec3 L, vec3 V, vec3 N) {
+    float NoLRaw = dot(N, L);
+    if (NoLRaw <= 0.0 || dot(N, V) <= 0.0) return vec3(0.0);
+
+    float m = saturate(advanced_strength);
+    vec3 H = normalize(L + V);
+    float NoL = saturate(NoLRaw);
+    float NoH = saturate(dot(N, H));
+    float LoH = saturate(dot(L, H));
+
+    vec3 antiPeak = mix(vec3(1.0), vec3(anti_spec_peak_r, anti_spec_peak_g, anti_spec_peak_b), m);
+    float antiFall = max(mix(1.0, anti_spec_peak_falloff, m), 0.00001);
+    float diffFres = mix(1.0, diffuse_fresnel_peak, m);
+    float diffTerm = m * diffuse_smooth_terminator;
+
+    vec3 diffuse = vec3(1.0 / PI);
+    diffuse *= mix(diffFres, 1.0, sqrt(LoH));                         // Diffuse Fresnel
+    diffuse *= mix(antiPeak, vec3(1.0), pow(NoH, antiFall));          // Anti-Specular Peak
+    diffuse *= smoothTerminator(NoL, diffTerm);                       // Diffuse Smooth Terminator
+    return diffuse;
+}
+
+// ---- pseudo SSS hooks (brdf_view extension, optional; docs/pseudo_sss.md) ----
+// Lit Object with "SSS" on blurs BRDF_sss_diffuse (lit, before albedo) in screen
+// space, multiplies it by BRDF_sss_albedo and adds the rest of BRDF() unblurred.
+// Contract: BRDF() == BRDF_sss_diffuse() * BRDF_sss_albedo() + specular.
+vec3 BRDF_sss_albedo() {
+    return saturate(mon2lin(base_color));
+}
+
+vec3 BRDF_sss_diffuse(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
+    return callistoDiffuse(L, V, N);
+}
+
 vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
     float NoLRaw = dot(N, L);
     float NoVRaw = dot(N, V);
@@ -110,26 +163,17 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
     float NoL = saturate(NoLRaw);
     float NoV = saturate(abs(NoVRaw) + 0.00001);
     float NoH = saturate(dot(N, H));
-    float LoH = saturate(dot(L, H));
     float VoH = saturate(dot(V, H));
 
-    vec3 baseColor = saturate(mon2lin(base_color));
     vec3 F0 = vec3(0.08 * saturate(specular));
 
     // Callisto parameters, blended from neutral by advanced_strength.
-    vec3 antiPeak = mix(vec3(1.0), vec3(anti_spec_peak_r, anti_spec_peak_g, anti_spec_peak_b), m);
-    float antiFall = max(mix(1.0, anti_spec_peak_falloff, m), 0.00001);
     vec3 dualTint = mix(vec3(1.0), vec3(dual_spec_tint_r, dual_spec_tint_g, dual_spec_tint_b), m);
-    float diffFres = mix(1.0, diffuse_fresnel_peak, m);
-    float diffTerm = m * diffuse_smooth_terminator;
     vec3 specTermW = m * spec_smooth_terminator * vec3(spec_term_tint_r, spec_term_tint_g, spec_term_tint_b);
     float fresFall = mix(1.0, spec_fresnel_falloff, m);
 
     // ---- diffuse ----
-    vec3 diffuse = baseColor / PI;
-    diffuse *= mix(diffFres, 1.0, sqrt(LoH));                         // Diffuse Fresnel
-    diffuse *= mix(antiPeak, vec3(1.0), pow(NoH, antiFall));          // Anti-Specular Peak
-    diffuse *= smoothTerminator(NoL, diffTerm);                       // Diffuse Smooth Terminator
+    vec3 diffuse = BRDF_sss_albedo() * callistoDiffuse(L, V, N);
 
     // ---- specular: dual-lobe GGX ----
     // Lobe roughness as shipped: the BasePass writes saturate(R * lerp(1, avg, m)) to the

@@ -9,7 +9,7 @@ import { defaultColorSpace, loadTextureImage } from '../brdf/param-texture.js';
 import type { TextureChannel, TextureColorSpace } from '../brdf/types.js';
 import type { SnapshotOptions, ViewKey } from '../views/base-view.js';
 import type { LitObjectView } from '../views/lit-object.js';
-import { BrdfEvaluator, type EvalSample, type Vec3 } from './evaluate.js';
+import { BrdfEvaluator, type EvalComponent, type EvalSample, type Vec3 } from './evaluate.js';
 import { DATA_VIEWS, exportData, sph, type ExportOptions } from './export-data.js';
 import {
   STATE_VERSION,
@@ -238,9 +238,14 @@ export function installApi(store: Store, views: ViewMap, ready: Promise<void>): 
 
     /**
      * Raw BRDF RGB for one input (returns [r,g,b]) or an array (returns [[r,g,b], ...]).
-     * Options: brdf (which loaded BRDF), params (temporary overrides, state unchanged).
+     * Options: brdf (which loaded BRDF), params (temporary overrides, state unchanged),
+     * component ('brdf' = BRDF(), the default; 'sssDiffuse' / 'sssAlbedo' = the pseudo-SSS
+     * hook functions of a .brdf that declares them, for checking the split).
      */
-    async evaluate(input: EvalInput | EvalInput[], opts: { brdf?: BrdfRef; params?: Record<string, unknown> } = {}) {
+    async evaluate(
+      input: EvalInput | EvalInput[],
+      opts: { brdf?: BrdfRef; params?: Record<string, unknown>; component?: EvalComponent } = {},
+    ) {
       await ready;
       let inst = findBrdf(opts.brdf);
       if (opts.params) {
@@ -252,7 +257,7 @@ export function installApi(store: Store, views: ViewMap, ready: Promise<void>): 
         inst = tmp;
       }
       const list = Array.isArray(input) ? input : [input];
-      const rgb = await getEvaluator().evaluate(inst, list.map(toSample));
+      const rgb = await getEvaluator().evaluate(inst, list.map(toSample), opts.component ?? 'brdf');
       const out: Vec3[] = list.map((_, i) => [rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]]);
       return Array.isArray(input) ? out : out[0];
     },

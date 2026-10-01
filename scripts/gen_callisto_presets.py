@@ -29,6 +29,8 @@ PRESETS = {
         "diffuse_smooth_terminator": 0.15, "diffuse_fresnel_peak": 1.0,
         "anti_spec_peak_r": 0.0, "anti_spec_peak_g": 1.0, "anti_spec_peak_b": 0.5,
         "anti_spec_peak_falloff": 0.125,
+        "sss_scatter_radius": 0.6, "sss_falloff_r": 1.0, "sss_falloff_g": 0.25, "sss_falloff_b": 0.05,
+        "sss_subsurface_r": 1.0, "sss_subsurface_g": 1.0, "sss_subsurface_b": 1.0,
     }),
     "callisto_eye": ("eye (sclera/iris diffuse + dual specular; no Eye shading model)", "SP_*_Eye_Main", {
         "base_color": (0.85, 0.82, 0.78), "roughness": 0.3,
@@ -39,6 +41,8 @@ PRESETS = {
         "diffuse_smooth_terminator": 0.0, "diffuse_fresnel_peak": 6.0,
         "anti_spec_peak_r": 1.0, "anti_spec_peak_g": 1.0, "anti_spec_peak_b": 1.0,
         "anti_spec_peak_falloff": 1.0,
+        "sss_scatter_radius": 0.5, "sss_falloff_r": 1.0, "sss_falloff_g": 0.65, "sss_falloff_b": 0.15,
+        "sss_subsurface_r": 1.0, "sss_subsurface_g": 1.0, "sss_subsurface_b": 1.0,
     }),
     "callisto_teeth": ("teeth", "SP_Jacob_Teeth", {
         "base_color": (0.86, 0.82, 0.72), "roughness": 0.4,
@@ -49,6 +53,8 @@ PRESETS = {
         "diffuse_smooth_terminator": 0.0, "diffuse_fresnel_peak": 4.0,
         "anti_spec_peak_r": 1.5, "anti_spec_peak_g": 1.5, "anti_spec_peak_b": 1.1,
         "anti_spec_peak_falloff": 4.0,
+        "sss_scatter_radius": 1.5, "sss_falloff_r": 0.8, "sss_falloff_g": 0.5, "sss_falloff_b": 0.25,
+        "sss_subsurface_r": 1.0, "sss_subsurface_g": 1.0, "sss_subsurface_b": 1.0,
     }),
     "callisto_cloth_prisoner": ("prisoner suit cloth", "SP_Player_Jacob_Cloth", {
         "base_color": (0.62, 0.45, 0.16), "roughness": 0.8,
@@ -59,6 +65,8 @@ PRESETS = {
         "diffuse_smooth_terminator": 0.5, "diffuse_fresnel_peak": 5.0,
         "anti_spec_peak_r": 0.5, "anti_spec_peak_g": 0.5, "anti_spec_peak_b": 0.5,
         "anti_spec_peak_falloff": 0.5,
+        "sss_scatter_radius": 10.0, "sss_falloff_r": 1.0, "sss_falloff_g": 0.35, "sss_falloff_b": 0.0,
+        "sss_subsurface_r": 0.1, "sss_subsurface_g": 0.1, "sss_subsurface_b": 0.1,
     }),
 }
 

@@ -44,12 +44,14 @@ export class BrdfProgramCache {
   /**
    * Linked program for a BRDF (built and cached lazily). null on compile error.
    * `bindings` lists parameters read from images (templates with vUV only).
+   * `defines` selects a shader variant (templates with ::INSERT_DEFINES_HERE::).
    */
-  get(def: BrdfDef, bindings: readonly TextureBinding[] = []): BrdfProgram | null {
-    const key = bindings
-      .map((b) => `${b.name}:${b.channel}:${b.convert}`)
-      .sort()
-      .join(',');
+  get(def: BrdfDef, bindings: readonly TextureBinding[] = [], defines = ''): BrdfProgram | null {
+    const key =
+      bindings
+        .map((b) => `${b.name}:${b.channel}:${b.convert}`)
+        .sort()
+        .join(',') + (defines ? `|${defines.replace(/\s+/g, ' ')}` : '');
     let variants = this.programs.get(def);
     if (!variants) {
       variants = new Map();
@@ -62,9 +64,9 @@ export class BrdfProgramCache {
     try {
       const program = buildProgram(
         gl,
-        injectTemplate(this.templates.vert, def, bindings),
-        injectTemplate(this.templates.frag, def, bindings),
-        `${this.label}:${def.name}${key ? ` [textures: ${key}]` : ''}`,
+        injectTemplate(this.templates.vert, def, bindings, defines),
+        injectTemplate(this.templates.frag, def, bindings, defines),
+        `${this.label}:${def.name}${key ? ` [variant: ${key}]` : ''}`,
       );
       const rec: BrdfProgram = {
         program,

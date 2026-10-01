@@ -10,8 +10,15 @@
 //                          by the baked per-vertex visibility V(L) (SH), 2 traces
 //                          a shadow ray against the mesh BVH (any hit).
 // The injected analytic/measured BRDF is evaluated per sample.
+//
+// Pseudo SSS variant (BRDF_SSS defined by src/gl/sss.ts when the .brdf declares
+// BRDF_sss_diffuse): the lighting is split over three outputs so that only the
+// diffuse light is blurred afterwards. Without the define this shader is the
+// plain single-output one.
 precision highp float;
 precision highp int;
+
+::INSERT_DEFINES_HERE::
 
 uniform sampler2D envMap;
 uniform sampler2D envConditionalCdf;
@@ -48,7 +55,15 @@ in vec4 vOcc1;
 in vec4 vOcc2;
 in vec4 vOcc3;
 
+#ifdef BRDF_SSS
+// Camera forward axis, for the view depth stored next to the diffuse light.
+uniform vec3 sssCamForward;
+layout(location = 0) out vec4 fragColor;      // specular (not scattered); a: coverage
+layout(location = 1) out vec4 fragSssDiffuse; // diffuse light before albedo; a: view depth
+layout(location = 2) out vec4 fragSssAlbedo;  // albedo applied after scattering
+#else
 out vec4 fragColor;
+#endif
 
 ::INSERT_UNIFORMS_HERE::
 
@@ -288,6 +303,15 @@ void main(void)
     buildTBN(N, X, Y);
 
     vec3 result = vec3(0.0);
+#ifdef BRDF_SSS
+    // result holds the specular part; the diffuse part (before albedo) goes to sssDiffuse.
+    vec3 sssDiffuse = vec3(0.0);
+#ifdef BRDF_SSS_HAS_ALBEDO
+    vec3 sssAlbedo = max(BRDF_sss_albedo(), vec3(0.0));
+#else
+    vec3 sssAlbedo = vec3(1.0);
+#endif
+#endif
 
     if (renderWithIBL > 0.5) {
         // Cranley-Patterson rotation per pixel to decorrelate the sequence.
@@ -333,16 +357,34 @@ void main(void)
                 vec3 origin = wPos + Ng * (dot(Ng, L) >= 0.0 ? rayEpsilon : -rayEpsilon);
                 if (occludedRay(origin, L)) continue;
             }
+#ifdef BRDF_SSS
+            vec3 d = max(BRDF_sss_diffuse(L, V, N, X, Y), vec3(0.0)) * env * nDotL * visibility / pdf;
+            sssDiffuse += d;
+            result += max(contribution - d * sssAlbedo, vec3(0.0));
+#else
             result += contribution;
+#endif
         }
         result /= float(numSamples);
+#ifdef BRDF_SSS
+        sssDiffuse /= float(numSamples);
+#endif
     } else {
         vec3 L = normalize(incidentVector);
         vec3 b = max(BRDF(L, V, N, X, Y), vec3(0.0));
-        if (useNDotL > 0.5)
-            b *= max(dot(N, L), 0.0);
-        result = b;
+        float lightScale = useNDotL > 0.5 ? max(dot(N, L), 0.0) : 1.0;
+#ifdef BRDF_SSS
+        vec3 d = max(BRDF_sss_diffuse(L, V, N, X, Y), vec3(0.0));
+        sssDiffuse = d * lightScale;
+        result = max(b - d * sssAlbedo, vec3(0.0)) * lightScale;
+#else
+        result = b * lightScale;
+#endif
     }
 
     fragColor = vec4(max(result, vec3(0.0)), 1.0);
+#ifdef BRDF_SSS
+    fragSssDiffuse = vec4(max(sssDiffuse, vec3(0.0)), dot(wPos - cameraPos, sssCamForward));
+    fragSssAlbedo = vec4(sssAlbedo, 1.0);
+#endif
 }

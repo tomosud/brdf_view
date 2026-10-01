@@ -43,7 +43,8 @@ UI をクリックで操作するより、上のどれかを使う。UI を触�
    - 既定サイズ 512×512、`--width` / `--height` で変える。IBL は `--frames`（既定 512）回積算
    - 文書の図は `--figure`（4 倍のスーパーサンプリング、`litObject` / `litSphere` は背景透過）。個別には `--supersample n`、`--background transparent|r,g,b`
    - 検証の数値は画像から取らない。`--eval`（`evaluate`）/ `--data`（`exportData`）は露出・ガンマ前のリニア float
-   - 図をまとめて作るときは `--batch`（`{"defaults": {...}, "jobs": [...]}`、パスはバッチファイルから相対）
+   - 図をまとめて作るときは `--batch`（`{"defaults": {...}, "jobs": [...]}`、パスはバッチファイルから相対）。ジョブに `opt` や `set` を書くと `defaults` の同じキーを丸ごと置き換える（結合しない）ので、共通の値もジョブ側に書く
+   - 疑似 SSS（Lit Object、独自実装・近似）: `--opt litObject.sss=true`。`callisto_*.brdf` など `BRDF_sss_diffuse` を持つ `.brdf` でだけ効く。散乱の距離は cm なので、モデルの実寸を `--opt litObject.sizeCm=<最大の辺の cm>` で合わせる（`dm.obj` は既定で 30.17、ほかは 20）。調整は `--set sss_strength=...` など `sss_*`。影の縁のにじみを見るなら `--opt litObject.occlusion=ray`。詳しくは `docs/pseudo_sss.md`
 4. 結果を確かめる
    - 出力 PNG を開いて目で確認する
    - `shader error:` や `warning:` が出ていないか見る（存在しないパラメータ名は警告になる）
@@ -61,7 +62,7 @@ const csv = await brdfView.exportData('polar', { format: 'csv' });
 const link = await brdfView.getLink();
 ```
 
-- `evaluate` は `.brdf` の `BRDF(L, V, N, X, Y)` の生の値（切り捨て・N·L・露出なし）。既定の局所座標は N=(0,0,1)、X=(1,0,0)、Y=(0,1,0)。`{ params: {...} }` で一時的に値を変えて評価できる
+- `evaluate` は `.brdf` の `BRDF(L, V, N, X, Y)` の生の値（切り捨て・N·L・露出なし）。既定の局所座標は N=(0,0,1)、X=(1,0,0)、Y=(0,1,0)。`{ params: {...} }` で一時的に値を変えて評価できる。疑似 SSS は入らない。`{ component: 'sssDiffuse' | 'sssAlbedo' }` で、疑似 SSS のフック関数の値を取り出せる
 - `exportData` の列: 角度、`Lx..Vz`、`r,g,b`、プロット系はさらに `value`（チャンネル・N·L 込み）と `plotted`（log 込み）
 
 ## 注意
@@ -73,3 +74,4 @@ const link = await brdfView.getLink();
 - `sample/brdf/` を編集した直後でも、コマンドラインは既定で Vite をその場で起動するので反映される（`--dist` はビルド済みを使う）
 - 初回は `web` で `npm ci`（`capture.bat` は自動）。Chromium が無ければ `npx playwright install chromium`
 - `.brdf` を手で編集するときは、リポジトリの CLAUDE.md の決まり（パラメータのコメントは日本語 / 英語、近似や独自拡張はその旨を明記）に従う。`callisto_*` の派生プリセットは `scripts/gen_callisto_presets.py` で生成し、手で編集しない
+- 疑似 SSS に手を入れる、または別の `.brdf` を対応させるときは、先に `docs/pseudo_sss.md` を読む。変更後は `python scripts/verify_sss.py`（フックの約束とフィルタの数値検証）と `python scripts/verify_callisto_brdf.py` を通す
