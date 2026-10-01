@@ -54,12 +54,13 @@ https://rgl.epfl.ch/materials
 
 - **共有 URL**: アドレスバーの URL が操作に合わせて自動で更新されます（表示中の BRDF だけが入ります。外部の `.brdf` や測定データを表示中は更新しません）。URL を打ち込むと、すぐその状態になります。ツールバーの `Copy link` でも、今の状態を再現する URL をコピーできます（例 `https://tomosud.github.io/brdf_view/#v=1&brdfs.0.file=callisto_brdf.brdf&light.theta=60`）。開くと同じ BRDF・パラメータ・ライトで表示されます。未知のキーは無視します。
 - **State JSON**: ツールバーの `State JSON` で、状態を JSON で表示・貼り付け（`Apply`）・保存（`Download`）できます。共有 URL を貼っても適用できます。
-- **JS API**: ページ内の `window.brdfView` から、`getState()` / `setState()` / `listBrdfs()` / `listParams()` / `setParam()`、`render(view, {width, height})`（PNG）、`evaluate({L, V, ...})`（BRDF の RGB 値）、`exportData(view)`（プロットやスライスの数値、JSON / CSV）を呼べます。GitHub Pages 版でも動きます。
+- **JS API**: ページ内の `window.brdfView` から、`getState()` / `setState()` / `listBrdfs()` / `listParams()` / `setParam()`、`render(view, {width, height, supersample, background})`（PNG。表示用の画像）、`evaluate({L, V, ...})`（BRDF の生の RGB 値。露出・ガンマ前のリニア float）、`exportData(view)`（プロットやスライスの数値、JSON / CSV）を呼べます。GitHub Pages 版でも動きます。
 - **コマンドライン**: `capture.bat`（または `node web/scripts/capture.mjs`）で、ヘッドレスブラウザ（Playwright）から PNG・数値データ・評価値を 1 回で保存します。
 
 ```bat
 capture.bat --brdf callisto_brdf.brdf --set roughness=0.4 --light 60,0 --view litObject,slice --out out_{view}.png --data slice.csv
 capture.bat --url "<共有 URL>" --view litObject --out out.png
+capture.bat --state fig.json --view litObject --figure --width 768 --height 768 --out fig.png
 capture.bat --batch jobs.json
 ```
 

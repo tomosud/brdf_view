@@ -12,7 +12,8 @@ analytic
 # (The Callisto Protocol, SIGGRAPH 2023 Advances, Jimenez & Petersen).
 # Reconstructed from the game's shipped SubsurfaceProfile values and a GPU capture
 # of its deferred lighting shader (UE4.27 licensee branch). This is not the
-# original implementation and has not been validated against the game output.
+# original implementation. It matches the reconstructed shipped formula numerically
+# (scripts/verify_callisto_brdf.py) but has not been compared with game screenshots.
 #
 # Included: Lambert diffuse with Diffuse Fresnel, Anti-Specular Peak and Diffuse
 # Smooth Terminator; UE-style dual-lobe GGX (Roughness0/1 scale, LobeMix) with a
@@ -30,7 +31,7 @@ analytic
 #     fresnel_falloff 0.55, anti peak (0,1,0.5), SST 0.3 tint (1,1,1), DST 0.15
 #   eye (*_Eye_Main): r0 1.1, r1 2.0, lobe_mix 0.175, dual tint (1,1.4,0.8),
 #     diffuse_fresnel_peak 6, others default
-#   teeth (*_Teeth): r1 2.0, lobe_mix 0.7, anti peak (1.5,1.5,1) falloff 4,
+#   teeth (*_Teeth): r0 0.75 (UE default), r1 2.0, lobe_mix 0.7, anti peak (1.5,1.5,1.1) falloff 4,
 #     diffuse_fresnel_peak 4
 #   prisoner cloth (SP_Player_Jacob_Cloth): r0 1, r1 1, lobe_mix 1,
 #     dual tint (1,0.8,0.1), fresnel_falloff 0.75, SST 0.5 tint (0,0.5,1),
@@ -121,7 +122,6 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
 
     vec3 baseColor = saturate(mon2lin(base_color));
     vec3 F0 = vec3(0.08 * saturate(specular));
-    float rough = clamp(roughness, 0.02, 1.0);
 
     // Callisto parameters, blended from neutral by advanced_strength.
     vec3 antiPeak = mix(vec3(1.0), vec3(anti_spec_peak_r, anti_spec_peak_g, anti_spec_peak_b), m);
@@ -139,8 +139,14 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) {
     diffuse *= smoothTerminator(NoL, diffTerm);                       // Diffuse Smooth Terminator
 
     // ---- specular: dual-lobe GGX ----
-    float r0 = mix(rough, clamp(rough * roughness0_scale, 0.02, 1.0), m);
-    float r1 = mix(rough, clamp(rough * roughness1_scale, 0.02, 1.0), m);
+    // Lobe roughness as shipped: the BasePass writes saturate(R * lerp(1, avg, m)) to the
+    // GBuffer (avg = lerp(Roughness0, Roughness1, LobeMix)); the light scales it back by
+    // Roughness0/avg (Roughness1/avg), floors at 0.02 and fades by m. With m = 1 this is
+    // roughness * RoughnessN (while roughness * avg <= 1); with m = 0 it is roughness.
+    float avg = max(mix(roughness0_scale, roughness1_scale, lobe_mix), 0.00001);
+    float roughG = saturate(roughness * mix(1.0, avg, m));
+    float r0 = mix(max(roughG, 0.02), max(saturate(roughness0_scale / avg * roughG), 0.02), m);
+    float r1 = mix(max(roughG, 0.02), max(saturate(roughness1_scale / avg * roughG), 0.02), m);
     float exponent = 5.0 * max(fresFall, 0.00001);
     vec3 F_0 = fresnelFalloff(F0, VoH, exponent);
     vec3 F_1 = fresnelFalloff(F0 * dualTint, VoH, exponent);         // tinted second lobe

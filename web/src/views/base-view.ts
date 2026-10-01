@@ -99,21 +99,43 @@ export abstract class BaseView {
    * Render this view at exactly width x height pixels and return a PNG data URL.
    * The result depends only on the app state and the size (no animation, no DPR).
    */
-  async snapshot(width: number, height: number, options: { frames?: number } = {}): Promise<string> {
+  async snapshot(width: number, height: number, options: SnapshotOptions = {}): Promise<string> {
     await this.ready;
     await this.prepareSnapshot();
+    const outW = Math.max(1, Math.round(width));
+    const outH = Math.max(1, Math.round(height));
+    const bg = options.background ?? 'view';
+    if (bg !== 'view' && !this.supportsBackgroundOverride) {
+      throw new Error(`render: background "${JSON.stringify(bg)}" is only supported by litObject and litSphere`);
+    }
+    // Supersampling: draw at ss x the size, then box-filter down (in linear light).
+    const maxDim = Math.min(...(this.gl.getParameter(this.gl.MAX_VIEWPORT_DIMS) as Int32Array), 16384);
+    let ss = Math.max(1, Math.min(8, Math.round(options.supersample ?? 1)));
+    while (ss > 1 && (outW * ss > maxDim || outH * ss > maxDim)) ss--;
     this.snapshotting = true;
-    this.fixedSize = { width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) };
+    this.fixedSize = { width: outW * ss, height: outH * ss };
+    this.snapshotClearAlpha = bg !== 'view';
     try {
       this.renderSnapshot(options);
       // Read back in the same task as the draw, so preserveDrawingBuffer is not needed.
-      return this.canvas.toDataURL('image/png');
+      if (ss === 1 && bg === 'view') return this.canvas.toDataURL('image/png');
+      return downsampleToPng(this.canvas, ss, outW, outH, bg);
     } finally {
       this.fixedSize = null;
       this.snapshotting = false;
+      this.snapshotClearAlpha = false;
       this.requestRender();
     }
   }
+
+  /** Views that can draw their background as alpha 0 (see snapshotClearAlpha). */
+  protected readonly supportsBackgroundOverride: boolean = false;
+  /**
+   * True while a snapshot with background "transparent" or a color is drawn:
+   * views that support it clear the background to (0,0,0,0) and skip drawing it,
+   * so the geometry coverage ends up in alpha.
+   */
+  protected snapshotClearAlpha = false;
 
   /** Hook for async work that must finish before a snapshot (e.g. pending loads). */
   protected async prepareSnapshot(): Promise<void> {}
@@ -136,6 +158,84 @@ export abstract class BaseView {
   }
 
   protected abstract draw(): void;
+}
+
+/**
+ * Snapshot options.
+ * - frames: IBL accumulation passes (litObject)
+ * - supersample: render at N x the size and box-filter down (1-8, default 1)
+ * - background: "view" (the view's own background, default), "transparent",
+ *   or an sRGB color [r, g, b] in 0-1 (litObject / litSphere only)
+ */
+export interface SnapshotOptions {
+  frames?: number;
+  supersample?: number;
+  background?: 'view' | 'transparent' | [number, number, number];
+}
+
+const srgbToLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const linearToSrgb = (c: number) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
+
+/**
+ * Box-filter the (ss x larger) WebGL canvas down to outW x outH in linear light,
+ * with premultiplied alpha, then composite over `bg` (or keep alpha) and encode PNG.
+ * Must run in the same task as the draw (the drawing buffer is not preserved).
+ */
+function downsampleToPng(
+  src: HTMLCanvasElement,
+  ss: number,
+  outW: number,
+  outH: number,
+  bg: 'view' | 'transparent' | [number, number, number],
+): string {
+  const big = document.createElement('canvas');
+  big.width = src.width;
+  big.height = src.height;
+  const bctx = big.getContext('2d')!;
+  bctx.drawImage(src, 0, 0);
+  const inp = bctx.getImageData(0, 0, big.width, big.height).data;
+  const lut = new Float32Array(256);
+  for (let i = 0; i < 256; i++) lut[i] = srgbToLinear(i / 255);
+  const bgLin = Array.isArray(bg) ? bg.map((c) => srgbToLinear(Math.min(1, Math.max(0, c)))) : null;
+
+  const out = document.createElement('canvas');
+  out.width = outW;
+  out.height = outH;
+  const octx = out.getContext('2d')!;
+  const img = octx.createImageData(outW, outH);
+  const o = img.data;
+  const inv = 1 / (ss * ss);
+  for (let y = 0; y < outH; y++) {
+    for (let x = 0; x < outW; x++) {
+      let r = 0, g = 0, b = 0, a = 0;
+      for (let sy = 0; sy < ss; sy++) {
+        let p = ((y * ss + sy) * big.width + x * ss) * 4;
+        for (let sx = 0; sx < ss; sx++, p += 4) {
+          const al = bg === 'view' ? 1 : inp[p + 3] / 255;
+          r += lut[inp[p]] * al;
+          g += lut[inp[p + 1]] * al;
+          b += lut[inp[p + 2]] * al;
+          a += al;
+        }
+      }
+      r *= inv; g *= inv; b *= inv; a *= inv;
+      const q = (y * outW + x) * 4;
+      if (bgLin) {
+        r += bgLin[0] * (1 - a);
+        g += bgLin[1] * (1 - a);
+        b += bgLin[2] * (1 - a);
+        a = 1;
+      } else if (a > 0) {
+        r /= a; g /= a; b /= a;
+      }
+      o[q] = Math.round(linearToSrgb(Math.min(1, r)) * 255);
+      o[q + 1] = Math.round(linearToSrgb(Math.min(1, g)) * 255);
+      o[q + 2] = Math.round(linearToSrgb(Math.min(1, b)) * 255);
+      o[q + 3] = Math.round(a * 255);
+    }
+  }
+  octx.putImageData(img, 0, 0);
+  return out.toDataURL('image/png');
 }
 
 /** Read helpers for applyViewState: return undefined when the key is absent or invalid. */

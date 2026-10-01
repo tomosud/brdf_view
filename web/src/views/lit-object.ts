@@ -30,6 +30,7 @@ interface RenderTarget {
 }
 
 export class LitObjectView extends BaseView {
+  protected override readonly supportsBackgroundOverride = true;
   private cache: BrdfProgramCache;
   private env: EnvTexture;
   private bg: { program: WebGLProgram; u: Uniforms } | null = null;
@@ -294,24 +295,27 @@ export class LitObjectView extends BaseView {
     if (!this.bg) return;
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
     gl.viewport(0, 0, w, h);
-    gl.clearColor(0, 0, 0, 1);
+    gl.clearColor(0, 0, 0, this.snapshotClearAlpha ? 0 : 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    // background (env), behind everything
+    // background (env), behind everything; skipped (alpha 0) for a snapshot
+    // with a transparent / solid background
     gl.disable(gl.DEPTH_TEST);
     gl.depthMask(false);
-    gl.useProgram(this.bg.program);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.env.texture);
-    this.bg.u.i('envMap', 0);
-    this.bg.u.v3('camForward', ...cam.camForward);
-    this.bg.u.v3('camRight', ...cam.camRight);
-    this.bg.u.v3('camUp', ...cam.camUp);
-    this.bg.u.f('envIntensity', 1.0);
-    this.bg.u.f('hideBackground', this.hideBackground ? 1 : 0);
-    this.bg.u.f('grayscaleIBL', this.grayscaleIBL ? 1 : 0);
-    gl.bindVertexArray(this.emptyVAO);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    gl.bindVertexArray(null);
+    if (!this.snapshotClearAlpha) {
+      gl.useProgram(this.bg.program);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.env.texture);
+      this.bg.u.i('envMap', 0);
+      this.bg.u.v3('camForward', ...cam.camForward);
+      this.bg.u.v3('camRight', ...cam.camRight);
+      this.bg.u.v3('camUp', ...cam.camUp);
+      this.bg.u.f('envIntensity', 1.0);
+      this.bg.u.f('hideBackground', this.hideBackground ? 1 : 0);
+      this.bg.u.f('grayscaleIBL', this.grayscaleIBL ? 1 : 0);
+      gl.bindVertexArray(this.emptyVAO);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.bindVertexArray(null);
+    }
 
     // object
     gl.depthMask(true);
@@ -858,9 +862,11 @@ uniform float exposure;
 in vec2 vUv;
 out vec4 fragColor;
 void main() {
-  vec3 c = max(texture(sourceTex, vUv).rgb, vec3(0.0));
+  vec4 src = texture(sourceTex, vUv);
+  vec3 c = max(src.rgb, vec3(0.0));
   c *= pow(2.0, exposure);
   c = pow(c, vec3(1.0 / gamma));
-  fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+  // alpha is 1 except in snapshots with a transparent / solid background
+  fragColor = vec4(clamp(c, 0.0, 1.0), clamp(src.a, 0.0, 1.0));
 }
 `;

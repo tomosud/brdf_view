@@ -85,7 +85,7 @@ https://tomosud.github.io/brdf_view/#v=1&brdfs.0.file=callisto_brdf.brdf&brdfs.0
 | `listParams(brdf?)` | `[{ name, kind, min?, max?, default, value, description }]`。`description` は `.brdf` のコメント |
 | `setParam(name, value, brdf?)` | パラメータを 1 つ変える。色は `[r,g,b]` か `"r,g,b"` |
 | `listViews()` | `{ views, dataViews, environments, objects }` |
-| `render(view, { width, height, frames })` | PNG の data URL。指定サイズで 1 回だけ描く（DPR に依存しない）。`litObject` の IBL は `frames` 回（既定 512 = 画面で収束する回数）積算してから返す |
+| `render(view, { width, height, frames, supersample, background })` | PNG の data URL（表示用の画像。露出・ガンマ込み）。指定サイズで 1 回だけ描く（DPR・ウィンドウの大きさに依存しない。UI は写らない）。`litObject` の IBL は `frames` 回（既定 512 = 画面で収束する回数）積算してから返す。`supersample: n`（1〜8、既定 1）で n 倍の大きさに描いてリニアで縮小する（アンチエイリアス）。`background` は `'view'`（既定、ビュー本来の背景）、`'transparent'`（アルファ付き）、sRGB の `[r, g, b]`（`litObject` / `litSphere` のみ） |
 | `evaluate(input, { brdf, params })` | BRDF の生の値（RGB）。`input` は `{ L, V, N?, X?, Y? }`（ベクトル）か `{ thetaL, phiL, thetaV, phiV }`（度。N/X/Y 基準）。配列を渡すと配列で返す。`params` は一時的な上書きで、状態は変えない |
 | `exportData(view, { format, resolution })` | プロットやスライスの数値。`format: 'csv'` で CSV 文字列、既定は JSON オブジェクト |
 | `errors()` | シェーダのコンパイル・リンクのエラー |
@@ -154,6 +154,9 @@ capture.bat --brdf callisto_brdf.brdf --set roughness=0.3 --save-state state.jso
 | `--view` / `--out` | 撮るビュー（複数可、`page` は画面全体）と PNG の保存先 |
 | `--width` / `--height` | 画像のサイズ（既定 512×512。`page` はウィンドウの大きさ、既定 1600×1000） |
 | `--frames` | `litObject` の IBL の積算回数（既定 512） |
+| `--supersample <n>` | アンチエイリアス。n 倍で描いて縮小（1〜8、既定 1） |
+| `--background <bg>` | `view`（既定）/ `transparent` / `r,g,b`（sRGB 0〜1）。`litObject` / `litSphere` のみ |
+| `--figure` | 文書用の見本画像のプリセット。`--supersample 4`、`litObject` / `litSphere` は背景を透過（明示した値が優先） |
 | `--data` / `--data-view` / `--resolution` | `exportData` の保存先（`.csv` なら CSV、ほかは JSON）、対象ビュー、分割数 |
 | `--eval` / `--eval-out` | 評価する点の JSON（配列、または `{ "samples": [...], "brdf": ..., "params": {...} }`）と結果の保存先（省略時は標準出力） |
 | `--save-state` / `--print-link` | 状態 JSON の保存、共有 URL の出力 |
@@ -211,3 +214,10 @@ UI を直接操作するとき（Playwright のロケータなど）に使う。
 - 既存の `.brdf` の読み方は変えていない。評価用のシェーダ雛形 `evaluate.frag` も、表示用と同じ差し込み（`::INSERT_UNIFORMS_HERE::` など）を使う
 - 状態の形式を互換性の無い形で変えるときは `v` を上げ、古い `v=1` の読み込みを残す
 - GitHub Pages では URL と JS API が動く。コマンドラインはローカル専用（静的サイトにはサーバ機能を足していない）
+
+## 検証用の数値と文書用の画像の区別
+
+| 目的 | 経路 | 値 |
+| --- | --- | --- |
+| 検証（数値の比較） | `evaluate`（`--eval`）、`exportData`（`--data`） | `.brdf` の `BRDF()` の生の RGB（float32、リニア）。露出・トーンマップ・ガンマ・クランプは掛からない。`exportData` の `value` / `plotted` だけはプロットと同じチャンネル・N·L・log を含む |
+| 文書の見本画像 | `render`（`--view ... --out`）。図には `--figure` | 表示と同じ画像（露出・ガンマ込み、8bit sRGB PNG）。数値の比較には使わない |

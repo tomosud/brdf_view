@@ -5,7 +5,7 @@
 import type { Store } from '../state/store.js';
 import type { BrdfInstance, ParamValue } from '../brdf/types.js';
 import { shaderErrors } from '../gl/brdf-program.js';
-import type { ViewKey } from '../views/base-view.js';
+import type { SnapshotOptions, ViewKey } from '../views/base-view.js';
 import type { LitObjectView } from '../views/lit-object.js';
 import { BrdfEvaluator, type EvalSample, type Vec3 } from './evaluate.js';
 import { DATA_VIEWS, exportData, sph, type ExportOptions } from './export-data.js';
@@ -176,10 +176,17 @@ export function installApi(store: Store, views: ViewMap, ready: Promise<void>): 
     /**
      * Render one view at a fixed size and return a PNG data URL.
      * litObject with IBL accumulates `frames` passes (default 512, the converged count).
+     * supersample: draw at N x the size and box-filter down in linear light (anti-aliasing, default 1).
+     * background: "view" (default), "transparent" or an sRGB [r, g, b] (litObject / litSphere only).
+     * Output is the display image (exposure / gamma applied); use evaluate / exportData for numbers.
      */
-    async render(view: string, opts: { width?: number; height?: number; frames?: number } = {}): Promise<string> {
+    async render(view: string, opts: { width?: number; height?: number } & SnapshotOptions = {}): Promise<string> {
       await ready;
-      return viewOf(view).snapshot(opts.width ?? 512, opts.height ?? 512, { frames: opts.frames });
+      return viewOf(view).snapshot(opts.width ?? 512, opts.height ?? 512, {
+        frames: opts.frames,
+        supersample: opts.supersample,
+        background: opts.background,
+      });
     },
 
     /**

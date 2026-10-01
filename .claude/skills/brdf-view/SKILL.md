@@ -40,6 +40,8 @@ UI をクリックで操作するより、上のどれかを使う。UI を触�
    - `--state` / `--url` / `--brdf` / `--set name=value` / `--light θ,φ` / `--opt key=value`（URL と同じキー、例 `litObject.exposure=-1`）の順に適用される
    - ビュー名: `litObject`（`lit`）、`litSphere`（`sphere`）、`slice`、`polar`、`cartesian`、`plot3d`、`page`（画面全体）
    - 既定サイズ 512×512、`--width` / `--height` で変える。IBL は `--frames`（既定 512）回積算
+   - 文書の図は `--figure`（4 倍のスーパーサンプリング、`litObject` / `litSphere` は背景透過）。個別には `--supersample n`、`--background transparent|r,g,b`
+   - 検証の数値は画像から取らない。`--eval`（`evaluate`）/ `--data`（`exportData`）は露出・ガンマ前のリニア float
    - 図をまとめて作るときは `--batch`（`{"defaults": {...}, "jobs": [...]}`、パスはバッチファイルから相対）
 4. 結果を確かめる
    - 出力 PNG を開いて目で確認する

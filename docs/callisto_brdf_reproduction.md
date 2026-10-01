@@ -1,6 +1,6 @@
 # callisto_brdf reproduction status
 
-Last updated: 2026-09-30
+Last updated: 2026-10-01
 
 対象: `sample/brdf/callisto_brdf.brdf`
 
@@ -8,7 +8,7 @@ Last updated: 2026-09-30
 
 **独自実装・近似**。The Callisto Protocol（SIGGRAPH 2023 Advances, Jimenez & Petersen）の
 "Callisto BRDF" を、出荷データの SubsurfaceProfile の値と、ディファードライトの GPU キャプチャ
-（逆アセンブル）から再構成した `.brdf` です。元の実装そのものではなく、ゲームの画面との一致も検証していません。
+（逆アセンブル）から再構成した `.brdf` です。元の実装そのものではありません。再構成した式とは数値で一致することを確かめました（下の「数値の検証」）が、ゲームの画面との一致は検証していません。
 アプリ内では `callisto_brdf [custom implementation / 独自実装]` と表示します。
 
 元の Callisto BRDF は UE4 の SubsurfaceProfile（SSP）の拡張です。パラメータは SSP アセットにあり、
@@ -22,7 +22,8 @@ Last updated: 2026-09-30
 | Diffuse Fresnel | `lerp(DiffuseFresnelPeak, 1, sqrt(L·H))` | 同じ | そのまま |
 | Anti-Specular Peak | `lerp(Peak.rgb, 1, pow(N_d·H, Falloff))` | 同じ（`N_d = N`） | そのまま |
 | Diffuse Smooth Terminator | `smoothstep(0,1,saturate(N_d·L / DST))` | 同じ | そのまま |
-| デュアル GGX | UE 標準の SSP デュアルスペキュラ。ローブのラフネス = Roughness × Roughness0/1、`LobeMix` で混合 | 同じ（D_GGX, Vis_SmithJointApprox） | そのまま |
+| デュアル GGX | D_GGX と Vis_SmithJointApprox をローブごとに計算し、`LobeMix` で混合 | 同じ | そのまま |
+| ローブのラフネス | BasePass が `saturate(R × lerp(1, 平均, m))` を GBuffer に書き（平均 = `lerp(Roughness0, Roughness1, LobeMix)`）、ライトが `× Roughness0/平均`（1 も同様）で戻す。下限 0.02、`lerp(R', r, m)` | 同じ（2026-10-01 に修正。以前は BasePass 側の倍率が無く、`m` が中間のときに最大 56% ずれていた） | そのまま |
 | 第 2 ローブのティント | F0 × DualSpecularTint で別に Fresnel を計算 | 同じ | そのまま |
 | Specular Fresnel Falloff | Schlick の指数を `5 × Falloff` に | 同じ（F90 は UE の `saturate(50·F0.g)`） | そのまま |
 | Specular Smooth Terminator | RGB 別 `smoothstep(saturate(N·L / w))`、`w = lerp(mean(SST·Tint), SST·Tint, N·V)` | 同じ | そのまま |
@@ -78,4 +79,36 @@ Last updated: 2026-09-30
 ## 確認済みの点
 
 - WebGL2（GLSL ES 3.00）でシェーダがコンパイルできることを確認（headless Chromium / SwiftShader）
+- 再構成した式との数値一致（下の「数値の検証」）
 - ビューア上での見た目の確認は未実施（ユーザー確認）
+
+## 数値の検証（2026-10-01）
+
+`scripts/verify_callisto_brdf.py` が、再構成した出荷版の式（skin_mat_lean の `docs/pseudocode_callisto_brdf_realis.md` 1 章）を
+Python に写した参照実装と、brdf_view の `evaluate`（GPU、float32、露出・ガンマ前）を比べます。
+
+```bat
+python scriptserify_callisto_brdf.py
+```
+
+- 条件: `.brdf` 6 本（本体と派生 5 本）× `m` = 0, 0.25, 0.5, 0.75, 1、本体はさらにラフネス 0.9 / 0.02、ターミネーター 0、
+  ピークの強い値の 4 組 × `m` = 0.5, 1。光の θ = 0〜150°（12 段）× φ 5 方向、視点の θ = 0〜89°（5 段）。計 38 条件 × 300 サンプル × RGB
+- 比べる量: BRDF × N·L（出荷版のライトは N·L 込みの値を返すため）
+- 結果: 全条件で最大相対誤差 1.0e-4（許容 1e-3）。ラフネス 0.02 の鏡面方向（N·H ≈ 1）のサンプル（2 条件 × 8）だけは、
+  D_GGX の float32 の桁落ちで値が大きく揺れるので除外した（ゲームの GPU でも同じ計算になる）
+- 出力は `verify_out/`（git に入れない）
+
+| # | 項目 | 結果 |
+| --- | --- | --- |
+| 1 | 効き `m` | 一致。全項を `m` で補間し、`LobeMix` は補間しない。4bit の量子化（ディザ付き）は再現しない（`advanced_strength` は連続値）。BasePass は量子化前の Opacity から `m` を作る点も同様に省略 |
+| 2 | ローブのラフネス | **修正して一致**。`m` = 1 で `R × Roughness0`（`R × 平均 ≤ 1` のとき）、`m` = 0 で `R` |
+| 3 | フレネル | 一致。F90 は `saturate(50·F0.g)`、指数 `5 × Falloff` |
+| 4 | 第 2 ローブ | 一致。ティントは F0 側（F90 も `F0·Tint` の緑から） |
+| 5 | スペキュラのターミネーター | 一致。幅 0 で係数 1 |
+| 6 | 拡散のターミネーター | 一致。幅 0 で係数 1 |
+| 7 | Anti-Specular Peak | 一致（Falloff 0.125 と 4 で確認） |
+| 8 | 拡散フレネル | 一致。L·H は 0〜1 |
+| 9 | 面光源の正規化 | 差として残す（代替）。点光源（半径 0）なら出荷版の正規化係数は 1 |
+| 10 | 色空間 | 一致。`base_color` だけ正確な sRGB 曲線でリニア化、ティントは線形のまま |
+| 11 | プリセットの値 | 一致。`subsurface_profiles.csv` の空欄は UE の既定値（Roughness0 0.75、ティント・ピーク・Falloff 1、ターミネーター 0） |
+| 12 | 既定値 | `m` = 0 では UE 標準の SSP（単一の GGX）と一致。Callisto の項を中立値にして `m` = 1 にしたものは、出荷版の標準 SSP（シェーディングモデル 5）と同じ式。ただし **UE 5.8 標準の SSP とは 2 点違う**: (a) UE 5.8 は Vis を平均ラフネスで 1 回だけ計算する（出荷版はローブごとに 2 回。命令列で確認）。Jacob の値で最大 27%（グレージング）、(b) UE 5.8 は BasePass の倍率が無く、ローブのラフネスは `R × lerp(1, Roughness0, m)`、下限 0.02 は第 1 ローブだけ。`m` = 1 では (b) の差は無い |

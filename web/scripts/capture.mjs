@@ -37,6 +37,11 @@ Outputs:
   --width <px>           Render width  (default 512; page: viewport width, default 1600)
   --height <px>          Render height (default 512; page: viewport height, default 1000)
   --frames <n>           IBL accumulation passes for litObject (default 512 = converged)
+  --supersample <n>      Anti-aliasing: render at n x the size and box-filter down (1-8, default 1)
+  --background <bg>      view (default) | transparent | r,g,b (sRGB 0-1). litObject / litSphere only
+  --figure               Document-figure preset: --supersample 4, and --background transparent
+                         for litObject / litSphere (explicit options win). Images are display output (exposure/gamma applied);
+                         for verification numbers use --eval / --data instead.
   --data <file>          exportData of --data-view (default: first data view in --view,
                          else slice). .csv writes CSV, anything else JSON.
   --data-view <name>     slice, polar, cartesian or plot3d
@@ -50,7 +55,7 @@ Outputs:
 Batch:
   --batch <jobs.json>    {"defaults": {...}, "jobs": [{...}, ...]} or a plain array. Job keys
                          are the long option names (url, state, brdf, set, light, opt, view,
-                         out, width, height, frames, data, dataView, resolution, eval,
+                         out, width, height, frames, supersample, background, figure, data, dataView, resolution, eval,
                          evalOut, saveState, printLink). "state" may be an object. Paths are
                          relative to the batch file. One browser for all jobs.
 
@@ -74,6 +79,9 @@ const { values: args } = parseArgs({
     width: { type: 'string' },
     height: { type: 'string' },
     frames: { type: 'string' },
+    supersample: { type: 'string' },
+    background: { type: 'string' },
+    figure: { type: 'boolean' },
     data: { type: 'string' },
     'data-view': { type: 'string' },
     resolution: { type: 'string' },
@@ -96,6 +104,8 @@ if (args.help || process.argv.length <= 2) {
 }
 
 const DATA_VIEWS = ['slice', 'polar', 'cartesian', 'plot3d'];
+/** Views whose background can be transparent or a solid color (--background, --figure). */
+const BG_VIEWS = ['litObject', 'lit', 'litSphere', 'sphere'];
 
 function log(msg) {
   process.stderr.write(`[capture] ${msg}\n`);
@@ -107,6 +117,17 @@ function readJson(path) {
 
 function ensureParent(path) {
   mkdirSync(dirname(path), { recursive: true });
+}
+
+/** "view" | "transparent" | "r,g,b" | [r,g,b] -> render() background option. */
+function parseBackground(v) {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (Array.isArray(v)) return v.map(Number);
+  const s = String(v).trim();
+  if (s === 'view' || s === 'transparent') return s;
+  const c = s.split(',').map(Number);
+  if (c.length !== 3 || c.some((x) => !Number.isFinite(x))) throw new Error(`--background: expected view, transparent or r,g,b (got "${s}")`);
+  return c;
 }
 
 /** Normalize CLI options or a batch job into one job object with absolute paths. */
@@ -135,6 +156,9 @@ function normalizeJob(job, baseDir) {
     width: num(job.width),
     height: num(job.height),
     frames: num(job.frames),
+    supersample: num(job.supersample ?? (job.figure ? 4 : undefined)),
+    background: parseBackground(job.background),
+    figure: Boolean(job.figure),
     data: abs(job.data),
     dataView: job.dataView ?? job['data-view'],
     resolution: num(job.resolution),
@@ -298,7 +322,7 @@ async function runJob(context, baseUrl, job, index, total) {
         const t0 = Date.now();
         const dataUrl = await page.evaluate(
           ([v, o]) => window.brdfView.render(v, o),
-          [view, { width: job.width ?? 512, height: job.height ?? 512, frames: job.frames }],
+          [view, { width: job.width ?? 512, height: job.height ?? 512, frames: job.frames, supersample: job.supersample, background: job.background ?? (job.figure && BG_VIEWS.includes(view) ? 'transparent' : undefined) }],
         );
         writeFileSync(path, Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64'));
         log(`${label}${view} -> ${path} (${Date.now() - t0} ms)`);
