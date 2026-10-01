@@ -16,7 +16,7 @@
 // diffuse light is blurred afterwards. Without the define this shader is the
 // plain single-output one.
 //
-// Specular Glazing Blur variant (experimental custom approximation, defines set
+// Specular Glazing Blur variant (custom approximation, defines set
 // by src/gl/glazing.ts; IBL with ray-traced occlusion only):
 //   GLAZING_GBUFFER -> pre-pass that only writes normal, depth and position
 //   BRDF_GLAZING    -> each sample takes the specular normal and the shadow-ray

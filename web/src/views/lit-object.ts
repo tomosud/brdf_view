@@ -142,7 +142,7 @@ export class LitObjectView extends BaseView {
   private meshSizeCm = DEFAULT_SIZE_CM;
   private sss: SssPipeline | null = null;
   /**
-   * Specular Glazing Blur (src/gl/glazing.ts; experimental custom approximation).
+   * Specular Glazing Blur (src/gl/glazing.ts; custom approximation).
    * On by default, but only drawn for a .brdf that declares glazing_blur_radius,
    * in IBL with ray-traced occlusion; otherwise the regular path is used unchanged.
    */
@@ -1113,9 +1113,9 @@ export class LitObjectView extends BaseView {
           this.glazingEnabled = v;
           this.resetAccumulation();
         },
-        'Specular Glazing Blur（試験実装・独自実装・近似）: 光がかすめる明暗境界の帯で、スペキュラ用の法線と影を近くの画素から借りて、積算で平均する。' +
+        'Specular Glazing Blur（独自実装・近似）: 光がかすめる明暗境界の帯で、スペキュラ用の法線と影を近くの画素から借りて、積算で平均する。' +
           'IBL かつ Occlusion が Ray のときだけ効く。距離は glazing_blur_radius（cm）。対応する .brdf（glazing_blur_radius を持つもの）でのみ有効 / ' +
-          'Specular Glazing Blur (experimental custom approximation): near the light/dark boundary, each sample borrows the specular normal and the shadow from a nearby pixel, averaged by the accumulation. ' +
+          'Specular Glazing Blur (custom approximation): near the light/dark boundary, each sample borrows the specular normal and the shadow from a nearby pixel, averaged by the accumulation. ' +
           'Only with IBL and Occlusion = Ray; reach = glazing_blur_radius (cm). Only for a .brdf that declares glazing_blur_radius.',
       ),
       boolControl(

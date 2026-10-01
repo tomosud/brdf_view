@@ -1,8 +1,8 @@
-# Specular Glazing Blur（Lit Object、試験実装）
+# Specular Glazing Blur（Lit Object）
 
 Last updated: 2026-10-01
 
-**試験実装・独自実装・近似**。出荷版のレンダラの動作を再構成したもので、元の実装そのものではありません。効果を確かめるために入れた機能で、効果がはっきりしなければ削除します。
+**独自実装・近似**。出荷版のレンダラの動作を再構成したもので、元の実装そのものではありません。効果は小さく、半径は実寸（cm）で決まるので、肌に寄るほど、また `glazing_blur_radius` を上げるほど分かりやすくなります。
 
 - 既定はオン（Lit Object の `Glazing`）。ただし処理されるのは、下の条件を満たすときだけ
 - 効くのは、**IBL かつ `Occlusion` が `Ray`** で、対応する `.brdf` を表示しているときだけ。それ以外は通常の描画のまま
@@ -42,10 +42,10 @@ capture.bat --brdf callisto_brdf.brdf --opt litObject.object=dm.obj --opt litObj
 | --- | --- |
 | `Glazing`（`litObject.glazing`、`data-testid="ctl-glazing"`） | オン・オフ。既定はオン。非対応の `.brdf` では灰色になり、オンでも通常の描画になる |
 | `glazing_blur_radius` | 借りる画素までの最大の距離（cm）。0 で無効 |
-| `glazing_graze_power` | 試験用。距離に掛ける `(1 − N·L)` の指数。元の動作は 4。0 にすると、光の方を向いた面でも同じ距離で借りる（落ち影の境界もぼける） |
-| `glazing_radius_power` | 試験用。借りる画素の散らし方（距離の割合 = 乱数^指数）。元の動作は 3。1 で半径方向に一様、0.5 で円内に一様 |
-| `glazing_depth_tolerance` | 試験用。借りる画素との奥行きの差の上限（cm）。元の動作は 0.5 |
-| `glazing_borrow_normal` / `glazing_borrow_shadow` | 試験用。法線だけ、影だけを借りて、どちらが効いているかを見分ける。元の動作は両方オン |
+| `glazing_graze_power` | 確認用。距離に掛ける `(1 − N·L)` の指数。元の動作は 4。0 にすると、光の方を向いた面でも同じ距離で借りる（落ち影の境界もぼける） |
+| `glazing_radius_power` | 確認用。借りる画素の散らし方（距離の割合 = 乱数^指数）。元の動作は 3。1 で半径方向に一様、0.5 で円内に一様 |
+| `glazing_depth_tolerance` | 確認用。借りる画素との奥行きの差の上限（cm）。元の動作は 0.5 |
+| `glazing_borrow_normal` / `glazing_borrow_shadow` | 確認用。法線だけ、影だけを借りて、どちらが効いているかを見分ける。元の動作は両方オン |
 | `Size (cm)`（`litObject.sizeCm`） | モデルの最大の辺の実寸（cm）。疑似 SSS と共用 |
 
 ## 実装の場所
@@ -58,6 +58,6 @@ capture.bat --brdf callisto_brdf.brdf --opt litObject.object=dm.obj --opt litObj
 
 擬似 SSS と併用できる。拡散光（自分の法線）は SSS の拡散の出力へ、スペキュラ（借りた法線）はスペキュラの出力へ書く。
 
-## 削除するとき
+## 機能を外すとき
 
 `web/src/gl/glazing.ts` と、`iblObject.frag` の `BRDF_GLAZING` / `GLAZING_GBUFFER` の部分、`lit-object.ts` の `glazing` を含む部分、`.brdf` の `glazing_blur_radius`、`scripts/gen_callisto_presets.py` の同じキー、この文書を消す。

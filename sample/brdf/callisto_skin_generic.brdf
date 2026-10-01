@@ -26,7 +26,7 @@ analytic
 # neighbour normal/shadow), area-light GGX normalization, shadows, Realis.
 # Returns the BRDF value without the NoL factor, like the other samples.
 #
-# Specular Glazing Blur is not part of BRDF() either. EXPERIMENTAL: the viewer's
+# Specular Glazing Blur is not part of BRDF() either. The viewer's
 # Lit Object has a "Glazing" checkbox (on by default; a custom approximation, see
 # docs/glazing_blur.md) that applies it with IBL and Occlusion = Ray, using the
 # glazing_blur_radius parameter and the BRDF_sss_diffuse / BRDF_sss_albedo hooks.
@@ -77,10 +77,10 @@ float anti_spec_peak_r 0.0 9.0 0  # 輪郭（N·H→0）で拡散に掛ける色
 float anti_spec_peak_g 0.0 9.0 1  # 輪郭で拡散に掛ける色 G / diffuse tint G near N.H->0
 float anti_spec_peak_b 0.0 9.0 0.5  # 輪郭で拡散に掛ける色 B / diffuse tint B near N.H->0
 float anti_spec_peak_falloff 0.01 9.0 0.125  # AntiSpecularPeak の範囲。小さいほど輪郭だけに効く / AntiSpecularPeak falloff; lower = only at the silhouette
-float glazing_blur_radius 0.0 3.0 0.15  # Glazing Blur（試験実装。Lit Object の Glazing がオン、IBL かつ Occlusion が Ray のとき）: 明暗境界でスペキュラ用の法線と影を借りる近くの画素までの最大距離 cm（SSP SpecularGlazingBlurRadius）。0 で無効。顔は 0.25。大きくすると効果を確認しやすい / Glazing Blur (experimental; Lit Object, Glazing on, IBL with Occlusion = Ray): largest distance in cm to the nearby pixel whose specular normal and shadow are borrowed near the light/dark boundary (SSP SpecularGlazingBlurRadius); 0 = off, head 0.25; raise it to make the effect easier to see
-float glazing_graze_power 0.0 8.0 4.0  # Glazing Blur（試験用）: 距離に掛ける (1−N·L) の指数。元の動作は 4（光がかすめる所だけ）。0 にすると光の方を向いた面でも同じ距離で借りる（落ち影の境界もぼける） / Glazing Blur (experiment): exponent of the (1 - N.L) weight on the distance; reconstructed behaviour 4 (grazing light only); 0 borrows at the full distance on light-facing surfaces too (cast-shadow edges blur as well)
-float glazing_radius_power 0.5 6.0 3.0  # Glazing Blur（試験用）: 借りる画素の散らし方。距離の割合 = 乱数^指数。元の動作は 3（近くに集まる）。1 で半径方向に一様、0.5 で円内に一様 / Glazing Blur (experiment): spread of the borrowed pixels, distance fraction = random^power; reconstructed behaviour 3 (dense near the pixel), 1 = uniform in radius, 0.5 = uniform over the disc
-float glazing_depth_tolerance 0.0 5.0 0.5  # Glazing Blur（試験用）: 借りる画素との奥行きの差の上限 cm。元の動作は 0.5。大きくすると段差をまたいで借りる / Glazing Blur (experiment): largest view-depth difference in cm to a borrowed pixel; reconstructed behaviour 0.5; higher borrows across depth steps
+float glazing_blur_radius 0.0 3.0 0.15  # Glazing Blur（独自実装・近似。Lit Object の Glazing がオン、IBL かつ Occlusion が Ray のとき）: 明暗境界でスペキュラ用の法線と影を借りる近くの画素までの最大距離 cm（SSP SpecularGlazingBlurRadius）。0 で無効。顔は 0.25。大きくすると効果を確認しやすい / Glazing Blur (custom approximation; Lit Object, Glazing on, IBL with Occlusion = Ray): largest distance in cm to the nearby pixel whose specular normal and shadow are borrowed near the light/dark boundary (SSP SpecularGlazingBlurRadius); 0 = off, head 0.25; raise it to make the effect easier to see
+float glazing_graze_power 0.0 8.0 4.0  # Glazing Blur（確認用）: 距離に掛ける (1−N·L) の指数。元の動作は 4（光がかすめる所だけ）。0 にすると光の方を向いた面でも同じ距離で借りる（落ち影の境界もぼける） / Glazing Blur (tuning): exponent of the (1 - N.L) weight on the distance; reconstructed behaviour 4 (grazing light only); 0 borrows at the full distance on light-facing surfaces too (cast-shadow edges blur as well)
+float glazing_radius_power 0.5 6.0 3.0  # Glazing Blur（確認用）: 借りる画素の散らし方。距離の割合 = 乱数^指数。元の動作は 3（近くに集まる）。1 で半径方向に一様、0.5 で円内に一様 / Glazing Blur (tuning): spread of the borrowed pixels, distance fraction = random^power; reconstructed behaviour 3 (dense near the pixel), 1 = uniform in radius, 0.5 = uniform over the disc
+float glazing_depth_tolerance 0.0 5.0 0.5  # Glazing Blur（確認用）: 借りる画素との奥行きの差の上限 cm。元の動作は 0.5。大きくすると段差をまたいで借りる / Glazing Blur (tuning): largest view-depth difference in cm to a borrowed pixel; reconstructed behaviour 0.5; higher borrows across depth steps
 float sss_strength 0.0 1.0 1.0  # 疑似SSS（Lit Object の SSS がオンのとき）: 散乱の強さ。散乱の距離に掛かる。ゲームでは画素ごとの m×Opacity に当たるが、ここでは advanced_strength（m）と独立 / pseudo SSS (Lit Object, SSS on): scatter strength, multiplies the scatter radius. The game uses m x Opacity per pixel; here it is independent of advanced_strength (m)
 float sss_scatter_radius 0.0 20.0 0.6  # 疑似SSS: 散乱が届く距離 cm（SSP ScatterRadius）。Lit Object の Size (cm) で画面上の大きさが決まる / pseudo SSS: scatter reach in cm (SSP ScatterRadius); Lit Object "Size (cm)" sets its size on screen
 float sss_falloff_r 0.0 1.0 1  # 疑似SSS: 赤の広がり（SSP FalloffColor R）。小さいほど狭い / pseudo SSS: red spread (SSP FalloffColor R); lower = narrower
@@ -89,8 +89,8 @@ float sss_falloff_b 0.0 1.0 0.05  # 疑似SSS: 青の広がり（SSP FalloffColo
 float sss_subsurface_r 0.0 1.0 1  # 疑似SSS: 散乱した拡散光を混ぜる割合 R（SSP SubsurfaceColor）。0 で散乱なし / pseudo SSS: share of scattered diffuse light, R (SSP SubsurfaceColor); 0 = no scattering
 float sss_subsurface_g 0.0 1.0 1  # 疑似SSS: 散乱した拡散光を混ぜる割合 G / pseudo SSS: share of scattered diffuse light, G
 float sss_subsurface_b 0.0 1.0 1  # 疑似SSS: 散乱した拡散光を混ぜる割合 B / pseudo SSS: share of scattered diffuse light, B
-bool glazing_borrow_normal 1  # Glazing Blur（試験用）: スペキュラ用の法線を近くの画素から借りる。元の動作はオン / Glazing Blur (experiment): borrow the specular normal from the nearby pixel; reconstructed behaviour on
-bool glazing_borrow_shadow 1  # Glazing Blur（試験用）: 影（レイの出発点）を近くの画素から借りる。拡散とスペキュラの両方に効く。元の動作はオン / Glazing Blur (experiment): borrow the shadow (ray origin) from the nearby pixel, for diffuse and specular alike; reconstructed behaviour on
+bool glazing_borrow_normal 1  # Glazing Blur（確認用）: スペキュラ用の法線を近くの画素から借りる。元の動作はオン / Glazing Blur (tuning): borrow the specular normal from the nearby pixel; reconstructed behaviour on
+bool glazing_borrow_shadow 1  # Glazing Blur（確認用）: 影（レイの出発点）を近くの画素から借りる。拡散とスペキュラの両方に効く。元の動作はオン / Glazing Blur (tuning): borrow the shadow (ray origin) from the nearby pixel, for diffuse and specular alike; reconstructed behaviour on
 ::end parameters
 
 ::begin shader

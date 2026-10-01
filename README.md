@@ -116,6 +116,16 @@ Lit Object の `SSS`（既定オン）は、拡散光だけを画面上でぼか
 - プロット、Image Slice、Lit Sphere、`evaluate()` には入りません
 - 状態のキーは `litObject.sss`（真偽、既定 `true`）と `litObject.sizeCm`。SSS なし・テクスチャなしの素のモデルを撮る例: `capture.bat --brdf callisto_skin_jacob.brdf --opt litObject.object=dm.obj --opt litObject.sss=false --opt litObject.modelTextures=false --view litObject --out head.png`
 
+## Specular Glazing Blur（Lit Object）
+
+Lit Object の `Glazing`（既定オン）は、光がかすめる明暗境界の帯で、スペキュラ用の法線と影を近くの画素から借りて平均します。**独自実装・近似**で、出荷版のレンダラの動作を再構成したものです。詳しくは [docs/glazing_blur.md](docs/glazing_blur.md)。
+
+- 処理されるのは、`IBL` オン + `Occlusion` = `Ray` で、`glazing_blur_radius` を持つ `.brdf`（今は `callisto_brdf.brdf` と派生プリセット）を表示しているときだけです。それ以外は通常の描画になります
+- 距離は cm で決まります（顔の値は 0.25）。効果は小さく、肌に寄るほど、また `glazing_blur_radius` を上げるほど分かりやすくなります。`Size (cm)` は疑似 SSS と共用です
+- ほかの `glazing_` で始まるパラメータは確認用です（既定が元の動作）
+- プロット、Image Slice、Lit Sphere、`evaluate()` には入りません
+- 状態のキーは `litObject.glazing`（真偽、既定 `true`）
+
 ## パラメータのコメント（ツールチップ）
 
 `.brdf` のパラメータ行の末尾に `# 日本語 / English` の形でコメントを書くと、画面のパラメータ名にマウスを乗せたときにツールチップとして表示されます（このプロジェクトの拡張。元の形式ではコメントは無視されるだけなので互換性は保たれます）。
@@ -136,7 +146,7 @@ float roughness 0.02 1.0 0.5  # ラフネス（下限 0.02） / roughness (clamp
 | `sample/brdf/unreal_legacy_pbr.brdf` | **独自実装**。Unreal legacy Default Lit のローカルBRDF近似です。 |
 | `sample/brdf/openpbr.brdf` | **独自実装**。OpenPBR風の不透明反射近似で、元の参照実装そのものではありません。 |
 | `sample/brdf/substrate.brdf` | **独自実装**。Unreal Substrate Slab のローカルdirect lighting近似です。画面上の `second_roughness_as_clearcoat（custom）` は元実装にない独自拡張です。 |
-| `sample/brdf/callisto_brdf.brdf` | **独自実装・近似**。The Callisto Protocol の Callisto BRDF（UE4 SubsurfaceProfile 拡張）を、出荷データとGPUキャプチャから再構成したローカルBRDFです。Dual Normal・Glazing Blur・透過は含みません。SSS は BRDF には含まず、Lit Object の疑似 SSS（上の節。独自実装・近似、既定はオン）で足されます。詳細は [callisto_brdf reproduction status](docs/callisto_brdf_reproduction.md)。 |
+| `sample/brdf/callisto_brdf.brdf` | **独自実装・近似**。The Callisto Protocol の Callisto BRDF（UE4 SubsurfaceProfile 拡張）を、出荷データとGPUキャプチャから再構成したローカルBRDFです。Dual Normal・透過は含みません。SSS と Specular Glazing Blur は BRDF には含まず、Lit Object の疑似 SSS と Glazing（上の節。どちらも独自実装・近似、既定はオン）で足されます。詳細は [callisto_brdf reproduction status](docs/callisto_brdf_reproduction.md)。 |
 | `sample/brdf/brdf_slice_guide.brdf` | **独自の説明用（物理的な BRDF ではない）**。Image Slice（横 θh・縦 θd）のどの領域が何を表すかを色分けで示します。白 = スペキュラのピーク（左端）、マゼンタ = グレージングのフレネル（左上）、赤 = 再帰反射（右下）、黄 = カメラと同じ方向からの照明（下端、L ≒ V）、青 = 光が地平線付近（N·L→0）、シアン = 視線が地平線付近（N·V→0）、暗赤 = 地平線より下（本来は 0）。領域ごとに `show_*`（表示の切り替え）と `*_color`（色見本＝凡例。変えても Defaults で戻る）を持ちます。 |
 | `sample/brdf/callisto_skin_jacob.brdf` ほか `callisto_skin_generic` / `callisto_eye` / `callisto_teeth` / `callisto_cloth_prisoner` | **派生プリセット**。`callisto_brdf.brdf` と同じシェーダで、初期値だけを素材ごとの出荷値にしたもの。`scripts/gen_callisto_presets.py` で生成（手で編集しない）。将来はビューアのプリセット機能に置き換える予定です。 |
 

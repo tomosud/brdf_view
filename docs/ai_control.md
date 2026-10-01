@@ -51,7 +51,7 @@ BRDF Explorer Web を、人の手を介さずに操作するための入口は 3
 | `litObject.occlusion` | IBL でのモデル自身による遮蔽（UI の「Occlusion」）。`"off"`（なし）、`"sh"`（既定。読み込み時に頂点ごとに事前計算した近似）、`"ray"`（サンプルごとに影のレイを飛ばす正確な判定。重く、収束に時間がかかる）。以前の形式の `true` は `"sh"`、`false` は `"off"` として読む。平行光（`ibl: false`）には効かない |
 | `litObject.modelTextures` | モデルに付属するテクスチャを、表示中の BRDF に自動で貼る（UI の「Model tex」、`ctl-model-tex`、既定 `true`）。今は `dm.obj` だけが持つ（ノーマルマップ、ベースカラー、ラフネス）。貼られた画像は `getState()` の `brdfs[].textures` / `normalMap` に `modelDefault: true` 付きで出る。素のモデルを撮るときは `false` にする。`setTexture` / `--texture` で貼った画像が優先 |
 | `litObject.sss` | 疑似 SSS（UI の「SSS」、`data-testid="ctl-sss"`、既定 `true`）。拡散光だけを画面上でぼかす。独自実装・近似。対応する `.brdf`（`BRDF_sss_diffuse` を持つもの。今は `callisto_*`）でだけ効き、ほかでは無視される。値は `.brdf` の `sss_*` パラメータ。[pseudo_sss.md](pseudo_sss.md) |
-| `litObject.glazing` | Specular Glazing Blur（UI の「Glazing」、`ctl-glazing`、既定 `true`）。試験実装・独自実装・近似。`ibl: true` かつ `occlusion: "ray"` で、`glazing_blur_radius` を持つ `.brdf`（今は `callisto_*`）を表示しているときだけ効く。明暗境界の帯で、スペキュラ用の法線と影を近くの画素から借りる。[glazing_blur.md](glazing_blur.md) |
+| `litObject.glazing` | Specular Glazing Blur（UI の「Glazing」、`ctl-glazing`、既定 `true`）。独自実装・近似。`ibl: true` かつ `occlusion: "ray"` で、`glazing_blur_radius` を持つ `.brdf`（今は `callisto_*`）を表示しているときだけ効く。明暗境界の帯で、スペキュラ用の法線と影を近くの画素から借りる。[glazing_blur.md](glazing_blur.md) |
 | `litObject.sizeCm` | モデルの最大の辺の実寸（cm、UI の「Size (cm)」、`ctl-size-cm`）。疑似 SSS の距離（cm）を画面上の大きさに直すのに使う。`object` を変えると、そのモデルの既定値（`dm.obj` は 30.17、ほかは 20）に戻る。`object` と一緒に書いた場合は、書いた値が優先 |
 
 `setState` の決まり:
@@ -232,7 +232,7 @@ UI を直接操作するとき（Playwright のロケータなど）に使う。
 
 - 既存の `.brdf` の読み方は変えていない。評価用のシェーダ雛形 `evaluate.frag` も、表示用と同じ差し込み（`::INSERT_UNIFORMS_HERE::` など）を使う
 - `litObject.sss`、`litObject.sizeCm`、`litObject.modelTextures` は 2026-10-01 に追加。**既定は `sss: true`、`modelTextures: true`** なので、これらを書いていない以前の状態や URL は、次の場合に画像が変わる: (a) `callisto_*.brdf` を Lit Object の IBL / 平行光で表示（疑似 SSS が掛かる）、(b) `object: "dm.obj"`（テクスチャが貼られる）。以前と同じ画像にするには `litObject.sss=false`、`litObject.modelTextures=false` を足す。`callisto_*.brdf` に `sss_*` パラメータが増えたが、状態に書かれていなければ `.brdf` の既定値が使われる
-- `litObject.glazing` は 2026-10-01 に追加（試験実装）。**既定は `true`** なので、これを書いていない以前の状態や URL は、`callisto_*.brdf` を IBL かつ `occlusion: "ray"` で表示する場合に画像が変わる（明暗境界の帯でわずかに）。以前と同じ画像にするには `litObject.glazing=false` を足す。`occlusion` が `"sh"`（既定）や `"off"`、平行光では変わらない
+- `litObject.glazing` は 2026-10-01 に追加。**既定は `true`** なので、これを書いていない以前の状態や URL は、`callisto_*.brdf` を IBL かつ `occlusion: "ray"` で表示する場合に画像が変わる（明暗境界の帯でわずかに）。以前と同じ画像にするには `litObject.glazing=false` を足す。`occlusion` が `"sh"`（既定）や `"off"`、平行光では変わらない
 - 状態の形式を互換性の無い形で変えるときは `v` を上げ、古い `v=1` の読み込みを残す
 - GitHub Pages では URL と JS API が動く。コマンドラインはローカル専用（静的サイトにはサーバ機能を足していない）
 

@@ -1,4 +1,4 @@
-// Specular Glazing Blur for Lit Object: EXPERIMENTAL, CUSTOM IMPLEMENTATION /
+// Specular Glazing Blur for Lit Object: CUSTOM IMPLEMENTATION /
 // approximation (see docs/glazing_blur.md). A reconstruction of the behaviour of
 // a shipped renderer, not its original code.
 //
