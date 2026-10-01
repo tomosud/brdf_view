@@ -86,6 +86,36 @@ html, body {
   border-radius: 4px;
 }
 .toolbar-select[hidden] { display: none; }
+.state-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.state-panel[hidden] { display: none; }
+.state-json {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  font: 11px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--text);
+  background: #222;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.state-actions {
+  display: flex;
+  gap: 6px;
+}
+.state-status {
+  font-size: 11px;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+.state-status:empty { display: none; }
+.state-status-error { color: #ffb37a; }
 .toolbar-link {
   flex: 1 1 100%;
   color: #8dbdff;

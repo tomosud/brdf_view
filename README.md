@@ -48,6 +48,25 @@ https://rgl.epfl.ch/materials
 3. サンプルを試す場合は `Load sample Brdf` を押して一覧から選びます。
 4. 左側のパラメータで表示する BRDF を選び、値を調整します。
 
+## 状態の共有と自動操作（URL / JS API / コマンドライン）
+
+表示の状態（読み込んだ `.brdf`、全パラメータ、ライトの角度、各ビューの露出・モード・カメラ・環境・モデル）を、1 つの JSON（形式の版 `v=1`）で扱えます。詳しくは [AI・スクリプトからの操作](docs/ai_control.md)。
+
+- **共有 URL**: アドレスバーの URL が操作に合わせて自動で更新されます（表示中の BRDF だけが入ります。外部の `.brdf` や測定データを表示中は更新しません）。URL を打ち込むと、すぐその状態になります。ツールバーの `Copy link` でも、今の状態を再現する URL をコピーできます（例 `https://tomosud.github.io/brdf_view/#v=1&brdfs.0.file=callisto_brdf.brdf&light.theta=60`）。開くと同じ BRDF・パラメータ・ライトで表示されます。未知のキーは無視します。
+- **State JSON**: ツールバーの `State JSON` で、状態を JSON で表示・貼り付け（`Apply`）・保存（`Download`）できます。共有 URL を貼っても適用できます。
+- **JS API**: ページ内の `window.brdfView` から、`getState()` / `setState()` / `listBrdfs()` / `listParams()` / `setParam()`、`render(view, {width, height})`（PNG）、`evaluate({L, V, ...})`（BRDF の RGB 値）、`exportData(view)`（プロットやスライスの数値、JSON / CSV）を呼べます。GitHub Pages 版でも動きます。
+- **コマンドライン**: `capture.bat`（または `node web/scripts/capture.mjs`）で、ヘッドレスブラウザ（Playwright）から PNG・数値データ・評価値を 1 回で保存します。
+
+```bat
+capture.bat --brdf callisto_brdf.brdf --set roughness=0.4 --light 60,0 --view litObject,slice --out out_{view}.png --data slice.csv
+capture.bat --url "<共有 URL>" --view litObject --out out.png
+capture.bat --batch jobs.json
+```
+
+- 操作部品には `data-testid`（例 `param-roughness`、`view-litObject`、`ctl-exposure`）と `aria-label` を付けています。
+- Lit Object に `IBL` のチェックを追加しました。外すと HDRI の代わりに、Incident θ/φ からの平行光 1 つで照らします。
+- AI エージェント用の手順は [.claude/skills/brdf-view/SKILL.md](.claude/skills/brdf-view/SKILL.md) にあります。
+
 ## パラメータのコメント（ツールチップ）
 
 `.brdf` のパラメータ行の末尾に `# 日本語 / English` の形でコメントを書くと、画面のパラメータ名にマウスを乗せたときにツールチップとして表示されます（このプロジェクトの拡張。元の形式ではコメントは無視されるだけなので互換性は保たれます）。
@@ -102,6 +121,8 @@ cd web
 npm install
 npm run dev
 ```
+
+ヘッドレスでの撮影（`capture.bat`）も、初回に同じく `npm ci` を実行します。Playwright の Chromium が無い環境では、`web` で `npx playwright install chromium` を一度実行してください。
 
 Production build:
 

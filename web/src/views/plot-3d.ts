@@ -3,7 +3,7 @@
 // reflection/U/V direction lines and the unit circle. Left drag orbits, right
 // drag zooms, double-click resets.
 
-import { BaseView } from './base-view.js';
+import { BaseView, DEG2RAD_, RAD2DEG, num, obj, round6, type ViewState } from './base-view.js';
 import { buildProgram, Uniforms } from '../gl/renderer.js';
 import { BrdfProgramCache } from '../gl/brdf-program.js';
 import { buildHemisphere, unitCircle, directionLines } from '../gl/mesh.js';
@@ -50,6 +50,7 @@ export class Plot3DView extends BaseView {
 
   constructor(container: HTMLElement, store: Store) {
     super(
+      'plot3d',
       container,
       store,
       '3D Plot',
@@ -76,7 +77,28 @@ export class Plot3DView extends BaseView {
     this.setupInteraction();
 
     this.cache = new BrdfProgramCache(gl, 'brdftemplate3D.vert', 'brdftemplate3D.frag', '3D');
+    this.ready = this.cache.ready;
     this.cache.ready.then(() => this.requestRender()).catch((e) => console.error('3D templates', e));
+  }
+
+  override getViewState(): ViewState {
+    return {
+      camera: {
+        theta: round6(this.lookTheta * RAD2DEG),
+        phi: round6(this.lookPhi * RAD2DEG),
+        zoom: round6(this.lookZoom),
+      },
+    };
+  }
+
+  override async applyViewState(s: ViewState): Promise<void> {
+    const cam = obj(s, 'camera');
+    const theta = num(cam, 'theta');
+    const phi = num(cam, 'phi');
+    if (theta !== undefined) this.lookTheta = Math.max(0.001, Math.min(Math.PI / 2, theta * DEG2RAD_));
+    if (phi !== undefined) this.lookPhi = phi * DEG2RAD_;
+    this.lookZoom = Math.max(0.01, Math.min(100, num(cam, 'zoom') ?? this.lookZoom));
+    this.requestRender();
   }
 
   private makeBuffer(data: Float32Array): WebGLBuffer {

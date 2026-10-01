@@ -15,6 +15,11 @@ import { parseHdr } from './io/hdr.js';
 import { PlotPolarView } from './views/plot-polar.js';
 import { PlotCartesianView } from './views/plot-cartesian.js';
 import { scheduleSave, restoreSession } from './state/persist.js';
+import { installApi } from './api/index.js';
+import { applyState, stateFromLocation, type ViewMap } from './api/state.js';
+import { mountStateTools } from './ui/state-tools.js';
+import { startUrlSync } from './ui/url-sync.js';
+import type { BaseView } from './views/base-view.js';
 
 function fatal(message: string): void {
   const el = document.getElementById('fatal')!;
@@ -41,6 +46,11 @@ async function main(): Promise<void> {
   if (!checkFeatures()) return;
 
   const store = new Store();
+  const viewMap: ViewMap = {};
+  let markReady!: () => void;
+  const ready = new Promise<void>((resolve) => (markReady = resolve));
+  installApi(store, viewMap, ready);
+  mountStateTools(document.getElementById('toolbar')!);
   mountParameterPanel(document.getElementById('parameter-panel')!, store);
 
   const views = document.getElementById('views')!;
@@ -50,10 +60,13 @@ async function main(): Promise<void> {
   log.setAttribute('hidden', '');
   views.append(log);
 
-  new Plot3DView(viewRows.top, store);
-  new PlotPolarView(viewRows.top, store);
-  new PlotCartesianView(viewRows.top, store);
-  new ImageSliceView(viewRows.bottom, store);
+  const addView = (v: BaseView) => {
+    viewMap[v.key] = v;
+  };
+  addView(new Plot3DView(viewRows.top, store));
+  addView(new PlotPolarView(viewRows.top, store));
+  addView(new PlotCartesianView(viewRows.top, store));
+  addView(new ImageSliceView(viewRows.bottom, store));
 
   // Lit Object (IBL) — needs the equirect HDRI environment.
   try {
@@ -62,21 +75,33 @@ async function main(): Promise<void> {
     const objNames = await fetchJson<string[]>(`${import.meta.env.BASE_URL}obj/index.json`).catch(() => []);
     const res = await fetch(`${import.meta.env.BASE_URL}environments/${envNames[0]}`);
     if (res.ok) {
-      new LitObjectView(viewRows.bottom, store, parseHdr(await res.arrayBuffer()), envNames, objNames, envThumbs);
+      addView(new LitObjectView(viewRows.bottom, store, parseHdr(await res.arrayBuffer()), envNames, objNames, envThumbs));
     } else {
       console.warn('IBL environment not found; Lit Object view skipped.');
     }
   } catch (e) {
     console.error('IBL environment load failed', e);
   }
-  new LitSphereView(viewRows.bottom, store);
+  addView(new LitSphereView(viewRows.bottom, store));
 
   wireFileLoading(store, views);
   void wireSampleBrdfs(store);
   wireColResizer();
 
-  // Restore previous session from IndexedDB; fall back to seeding defaults.
-  const restored = await restoreSession(store);
+  // A state link (#v=1&...) wins over the saved session; otherwise restore the
+  // previous session from IndexedDB, and fall back to seeding defaults.
+  const linkState = await stateFromLocation(location).catch((e) => {
+    console.warn('Could not read the state in the URL', e);
+    return null;
+  });
+  let restored = false;
+  if (linkState) {
+    const warnings = await applyState(store, viewMap, linkState);
+    for (const w of warnings) console.warn(`[brdfView] ${w}`);
+    restored = store.state.brdfs.length > 0;
+  } else {
+    restored = await restoreSession(store);
+  }
   if (!restored) {
     for (const file of ['lambert.brdf', 'unreal_legacy_pbr.brdf', 'openpbr.brdf', 'substrate.brdf']) {
       try {
@@ -96,6 +121,10 @@ async function main(): Promise<void> {
 
   // Begin persisting after initial load to avoid saving during restore.
   store.subscribe(() => scheduleSave(store));
+
+  await Promise.all(Object.values(viewMap).map((v) => v.ready.catch(() => undefined)));
+  markReady();
+  startUrlSync(store, viewMap);
 }
 
 function mountViewRows(views: HTMLElement): { top: HTMLElement; bottom: HTMLElement } {

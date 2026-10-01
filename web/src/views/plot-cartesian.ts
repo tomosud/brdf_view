@@ -3,7 +3,7 @@
 // Left-drag pans, right-drag zooms, Ctrl+drag changes x/y scale, double-click
 // resets.
 
-import { BaseView } from './base-view.js';
+import { BaseView, bool, num, obj, round6, str, type ViewState } from './base-view.js';
 import { BrdfProgramCache } from '../gl/brdf-program.js';
 import { Line2D } from '../gl/line2d.js';
 import { createEmptyVAO } from '../gl/line-expansion.js';
@@ -13,7 +13,7 @@ import type { Store } from '../state/store.js';
 
 const SEGMENTS = 512;
 
-type CartesianMode = 'thetaV' | 'thetaH' | 'thetaD';
+export type CartesianMode = 'thetaV' | 'thetaH' | 'thetaD';
 
 const MODE_OPTIONS: { value: CartesianMode; text: string }[] = [
   { value: 'thetaV', text: 'Theta V' },
@@ -54,6 +54,7 @@ export class PlotCartesianView extends BaseView {
 
   constructor(container: HTMLElement, store: Store) {
     super(
+      'cartesian',
       container,
       store,
       'Theta V',
@@ -74,7 +75,48 @@ export class PlotCartesianView extends BaseView {
     });
     this.setupInteraction();
     this.cache = new BrdfProgramCache(gl, 'cartesianPlot.vert', 'cartesianPlot.frag', 'Cartesian');
+    this.ready = this.cache.ready;
     this.cache.ready.then(() => this.requestRender()).catch((e) => console.error('cartesian templates', e));
+  }
+
+  override getViewState(): ViewState {
+    return {
+      mode: this.mode,
+      phiV: round6(radToDeg360(this.phiV)),
+      lock: this.lockPhiV,
+      fixedAngle: round6(this.angleParam * 180 / Math.PI),
+      view: {
+        centerX: round6(this.centerX),
+        centerY: round6(this.centerY),
+        zoom: round6(this.lookZoom),
+        scaleX: round6(this.scaleX),
+        scaleY: round6(this.scaleY),
+      },
+    };
+  }
+
+  override async applyViewState(s: ViewState): Promise<void> {
+    const mode = str(s, 'mode');
+    if (mode && mode in MODE_INDEX) this.mode = mode as CartesianMode;
+    this.lockPhiV = bool(s, 'lock') ?? this.lockPhiV;
+    const phiV = num(s, 'phiV');
+    if (phiV !== undefined) this.phiV = degToRad(phiV);
+    if (this.mode === 'thetaV' && this.lockPhiV) this.phiV = this.store.state.incidentPhi;
+    const fixed = num(s, 'fixedAngle');
+    if (fixed !== undefined) this.angleParam = Math.max(0, Math.min(Math.PI / 2, degToRad(fixed)));
+    const v = obj(s, 'view');
+    this.centerX = num(v, 'centerX') ?? this.centerX;
+    this.centerY = num(v, 'centerY') ?? this.centerY;
+    this.lookZoom = Math.max(0.01, Math.min(50, num(v, 'zoom') ?? this.lookZoom));
+    this.scaleX = Math.max(0.01, Math.min(50, num(v, 'scaleX') ?? this.scaleX));
+    this.scaleY = Math.max(0.01, Math.min(50, num(v, 'scaleY') ?? this.scaleY));
+    this.renderControls();
+    this.requestRender();
+  }
+
+  /** Current plot settings needed to export the same curve as data. */
+  plotSettings(): { mode: CartesianMode; phiV: number; angleParam: number } {
+    return { mode: this.mode, phiV: this.phiV, angleParam: this.angleParam };
   }
 
   private renderControls(): void {

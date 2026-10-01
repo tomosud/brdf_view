@@ -3,7 +3,7 @@
 // topmost enabled BRDF. Left-drag on the sphere sets the global incident angle;
 // brightness/gamma/exposure/doubleTheta/useNDotL are local controls.
 
-import { BaseView } from './base-view.js';
+import { BaseView, bool, num, round6, type ViewState } from './base-view.js';
 import { BrdfProgramCache } from '../gl/brdf-program.js';
 import { buildSphere } from '../gl/mesh.js';
 import { ortho, lookAt } from '../gl/mat4.js';
@@ -29,7 +29,7 @@ export class LitSphereView extends BaseView {
   private useNDotL = true;
 
   constructor(container: HTMLElement, store: Store) {
-    super(container, store, 'Lit Sphere');
+    super('litSphere', container, store, 'Lit Sphere');
     const gl = this.gl;
 
     const sphere = buildSphere(1.0, 100, 100);
@@ -45,7 +45,29 @@ export class LitSphereView extends BaseView {
     this.setupInteraction();
 
     this.cache = new BrdfProgramCache(gl, 'brdftemplatesphere.vert', 'brdftemplatesphere.frag', 'Sphere');
+    this.ready = this.cache.ready;
     this.cache.ready.then(() => this.requestRender()).catch((e) => console.error('sphere templates', e));
+  }
+
+  override getViewState(): ViewState {
+    return {
+      brightness: round6(this.brightness),
+      gamma: round6(this.gamma),
+      exposure: round6(this.exposure),
+      doubleTheta: this.doubleTheta,
+      nDotL: this.useNDotL,
+    };
+  }
+
+  override async applyViewState(s: ViewState): Promise<void> {
+    this.brightness = num(s, 'brightness') ?? this.brightness;
+    this.gamma = num(s, 'gamma') ?? this.gamma;
+    this.exposure = num(s, 'exposure') ?? this.exposure;
+    this.doubleTheta = bool(s, 'doubleTheta') ?? this.doubleTheta;
+    this.useNDotL = bool(s, 'nDotL') ?? this.useNDotL;
+    this.footer.replaceChildren();
+    this.buildControls();
+    this.requestRender();
   }
 
   protected draw(): void {

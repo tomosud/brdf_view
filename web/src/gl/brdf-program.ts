@@ -100,7 +100,11 @@ export class BrdfProgramCache {
   }
 }
 
+/** Shader compile/link errors seen so far (exposed as window.brdfView.errors()). */
+export const shaderErrors: string[] = [];
+
 export function reportShaderError(name: string, e: ShaderError): void {
+  shaderErrors.push(`${name}: ${e.infoLog}`);
   console.error(`[shader] ${name}\n${e.infoLog}`);
   const el = document.getElementById('shader-log');
   if (el) {

@@ -2,7 +2,7 @@
 // half-disc, with normal/horizon/incident/reflection guides and a semicircle.
 // Left-drag pans, right-drag zooms, double-click resets.
 
-import { BaseView } from './base-view.js';
+import { BaseView, num, obj, round6, type ViewState } from './base-view.js';
 import { BrdfProgramCache } from '../gl/brdf-program.js';
 import { Line2D } from '../gl/line2d.js';
 import { createEmptyVAO } from '../gl/line-expansion.js';
@@ -24,6 +24,7 @@ export class PlotPolarView extends BaseView {
 
   constructor(container: HTMLElement, store: Store) {
     super(
+      'polar',
       container,
       store,
       'Polar Plot',
@@ -35,7 +36,20 @@ export class PlotPolarView extends BaseView {
     this.vao = createEmptyVAO(gl);
     this.setupInteraction();
     this.cache = new BrdfProgramCache(gl, 'polarPlot.vert', 'polarPlot.frag', 'Polar');
+    this.ready = this.cache.ready;
     this.cache.ready.then(() => this.requestRender()).catch((e) => console.error('polar templates', e));
+  }
+
+  override getViewState(): ViewState {
+    return { view: { centerX: round6(this.centerX), centerY: round6(this.centerY), zoom: round6(this.lookZoom) } };
+  }
+
+  override async applyViewState(s: ViewState): Promise<void> {
+    const v = obj(s, 'view');
+    this.centerX = num(v, 'centerX') ?? this.centerX;
+    this.centerY = num(v, 'centerY') ?? this.centerY;
+    this.lookZoom = Math.max(0.01, Math.min(50, num(v, 'zoom') ?? this.lookZoom));
+    this.requestRender();
   }
 
   protected draw(): void {

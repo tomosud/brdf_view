@@ -4,7 +4,7 @@
 
 import { floatControl, boolControl, colorControl, selectControl } from './controls.js';
 import type { Channel, Store } from '../state/store.js';
-import type { BrdfDef } from '../brdf/types.js';
+import type { BrdfDef, BrdfInstance, ParamDef } from '../brdf/types.js';
 import { splitCustomImplementationName } from '../brdf/loader.js';
 
 export function mountParameterPanel(root: HTMLElement, store: Store): void {
@@ -27,6 +27,7 @@ function section(title: string): HTMLElement {
 
 function globalSection(store: Store): HTMLElement {
   const s = section('Plot');
+  s.dataset.testid = 'plot-controls';
   const st = store.state;
 
   s.append(
@@ -57,6 +58,11 @@ function brdfSection(store: Store, id: string): HTMLElement {
   const inst = store.state.brdfs.find((b) => b.id === id)!;
   const s = section(inst.def.name);
   s.classList.add('brdf-section');
+  const index = store.state.brdfs.indexOf(inst);
+  s.dataset.testid = `brdf-${index}`;
+  s.dataset.brdfIndex = String(index);
+  if (inst.def.origin?.kind === 'bundled') s.dataset.brdfFile = inst.def.origin.filename;
+  s.dataset.visible = String(inst.visible);
   if (!inst.visible) s.classList.add('brdf-section-collapsed');
   const heading = s.querySelector('h3')!;
   heading.textContent = '';
@@ -66,6 +72,8 @@ function brdfSection(store: Store, id: string): HTMLElement {
   const visible = document.createElement('input');
   visible.type = 'checkbox';
   visible.checked = inst.visible;
+  visible.dataset.testid = 'brdf-visible';
+  visible.setAttribute('aria-label', `Show ${inst.def.name}`);
   visible.addEventListener('change', () => store.setVisible(id, visible.checked));
   if (isShaderBrdf(inst.def)) {
     const sourceIcon = document.createElement('button');
@@ -105,12 +113,14 @@ function brdfSection(store: Store, id: string): HTMLElement {
   defaults.className = 'btn btn-close';
   defaults.textContent = 'Defaults';
   defaults.title = 'Reset all parameters to their default values';
+  defaults.dataset.testid = 'brdf-defaults';
   defaults.addEventListener('click', () => store.resetParams(id));
 
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'btn btn-close';
   close.textContent = 'Close';
+  close.dataset.testid = 'brdf-close';
   close.addEventListener('click', () => store.removeBrdf(id));
 
   btnGroup.append(defaults, close);
@@ -119,39 +129,40 @@ function brdfSection(store: Store, id: string): HTMLElement {
   if (!inst.visible) return s;
 
   for (const p of inst.def.params) {
-    if (p.kind === 'float') {
-      s.append(
-        floatControl(
-          p.name,
-          Number(inst.values.get(p.name)),
-          p.min,
-          p.max,
-          p.default,
-          (v) => store.setParam(id, p.name, v),
-          p.description,
-        ),
-      );
-    } else if (p.kind === 'bool') {
-      s.append(
-        boolControl(
-          parameterDisplayName(p.name),
-          Boolean(inst.values.get(p.name)),
-          (v) => store.setParam(id, p.name, v),
-          p.description,
-        ),
-      );
-    } else {
-      s.append(
-        colorControl(
-          p.name,
-          inst.values.get(p.name) as [number, number, number],
-          (v) => store.setParam(id, p.name, v),
-          p.description,
-        ),
-      );
-    }
+    const row = paramControl(store, id, inst, p);
+    row.dataset.testid = `param-${p.name}`;
+    row.dataset.param = p.name;
+    s.append(row);
   }
   return s;
+}
+
+function paramControl(store: Store, id: string, inst: BrdfInstance, p: ParamDef): HTMLElement {
+  if (p.kind === 'float') {
+    return floatControl(
+      p.name,
+      Number(inst.values.get(p.name)),
+      p.min,
+      p.max,
+      p.default,
+      (v) => store.setParam(id, p.name, v),
+      p.description,
+    );
+  }
+  if (p.kind === 'bool') {
+    return boolControl(
+      parameterDisplayName(p.name),
+      Boolean(inst.values.get(p.name)),
+      (v) => store.setParam(id, p.name, v),
+      p.description,
+    );
+  }
+  return colorControl(
+    p.name,
+    inst.values.get(p.name) as [number, number, number],
+    (v) => store.setParam(id, p.name, v),
+    p.description,
+  );
 }
 
 function parameterDisplayName(name: string): string {

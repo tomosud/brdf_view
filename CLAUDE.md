@@ -43,6 +43,13 @@ npm run build
 - Parameter comments: a trailing `# ...` on a parameter line in `::begin parameters` is shown as that parameter's tooltip in the UI (project extension; the original format simply ignores it). Write every parameter comment in Japanese and English, Japanese first, separated by ` / ` (for example `float roughness 0 1 0.5  # ラフネス / roughness`). Keep it to one line that says what the parameter does and where its effect appears. New or edited project-local `.brdf` files must comment every parameter.
 - BRDFs that approximate or extend a referenced model must say so in the `.brdf` header, validation documentation, and user-facing sample/display name. Do not present an approximation or project-specific extension as the original implementation.
 
+## Automation API and State Format
+
+- `window.brdfView` (`web/src/api/`), shared links (`#v=1&...`) and `web/scripts/capture.mjs` share one state JSON format, documented in `docs/ai_control.md`. Use them (or the `brdf-view` skill) to render images and read BRDF values instead of driving the UI by hand.
+- When a view gains a control, add it to that view's `getViewState()` / `applyViewState()` so links and captures keep reproducing the screen.
+- Keep the format backward compatible: unknown keys are ignored, and a breaking change bumps `v` while still reading `v=1`.
+- Keep `data-testid` values stable; they are part of the automation interface.
+
 ## GitHub Pages
 
 - `.github/workflows/pages.yml` runs on pushes to `main` and on manual dispatch.

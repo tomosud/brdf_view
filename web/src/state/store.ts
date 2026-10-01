@@ -82,6 +82,25 @@ export class Store {
     this.emit();
   }
 
+  /**
+   * Replace the whole BRDF list (used by setState / shared links). Instances
+   * already in the list keep their display color; new ones get the next one.
+   */
+  setBrdfs(instances: BrdfInstance[]): void {
+    const keep = new Set(instances.map((b) => b.id));
+    for (const id of [...this.state.drawColors.keys()]) {
+      if (!keep.has(id)) this.state.drawColors.delete(id);
+    }
+    for (const inst of instances) {
+      if (!this.state.drawColors.has(inst.id)) {
+        this.state.drawColors.set(inst.id, PALETTE[this.paletteIndex++ % PALETTE.length]);
+      }
+    }
+    this.state.brdfs = [...instances];
+    if (this.state.soloId && !keep.has(this.state.soloId)) this.state.soloId = null;
+    this.emit();
+  }
+
   removeBrdf(id: string): void {
     const wasVisible = this.state.brdfs.some((b) => b.id === id && b.visible);
     this.state.brdfs = this.state.brdfs.filter((b) => b.id !== id);

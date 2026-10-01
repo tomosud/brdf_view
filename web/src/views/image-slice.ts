@@ -3,7 +3,7 @@
 // measured (MERL) BRDFs. Controls: phiD, gamma, exposure, Square ThetaH, Show
 // Chroma (brightness is fixed at 1, matching the original's slice window).
 
-import { BaseView } from './base-view.js';
+import { BaseView, bool, num, round6, str, type ViewState } from './base-view.js';
 import { BrdfProgramCache } from '../gl/brdf-program.js';
 import { buildProgram, Uniforms } from '../gl/renderer.js';
 import { createEmptyVAO } from '../gl/line-expansion.js';
@@ -47,7 +47,7 @@ export class ImageSliceView extends BaseView {
   private surfaceZoom = 1.0;
 
   constructor(container: HTMLElement, store: Store) {
-    super(container, store, 'Image Slice');
+    super('slice', container, store, 'Image Slice');
     const gl = this.gl;
     this.floatTarget = !!gl.getExtension('EXT_color_buffer_float');
     this.vao = createEmptyVAO(gl);
@@ -61,9 +61,44 @@ export class ImageSliceView extends BaseView {
     this.setupReadout();
     this.rawCache = new BrdfProgramCache(gl, 'imageSlice.vert', 'imageSliceRaw.frag', 'SliceRaw');
     this.surfaceCache = new BrdfProgramCache(gl, 'imageSliceSurface.vert', 'imageSliceSurface.frag', 'SliceSurface');
-    Promise.all([this.rawCache.ready, this.surfaceCache.ready])
+    this.ready = Promise.all([this.rawCache.ready, this.surfaceCache.ready]);
+    this.ready
       .then(() => this.requestRender())
       .catch((e) => console.error('slice templates', e));
+  }
+
+  override getViewState(): ViewState {
+    return {
+      mode: this.mode,
+      phiD: round6(this.phiDdeg),
+      gamma: round6(this.gamma),
+      exposure: round6(this.exposure),
+      height: round6(this.heightScale),
+      squareThetaH: this.useThetaHSquared,
+      showChroma: this.showChroma,
+      surfaceZoom: round6(this.surfaceZoom),
+    };
+  }
+
+  override async applyViewState(s: ViewState): Promise<void> {
+    const mode = str(s, 'mode');
+    if (mode === 'image' || mode === 'surface') this.mode = mode;
+    this.phiDdeg = num(s, 'phiD') ?? this.phiDdeg;
+    this.gamma = num(s, 'gamma') ?? this.gamma;
+    this.exposure = num(s, 'exposure') ?? this.exposure;
+    this.heightScale = num(s, 'height') ?? this.heightScale;
+    this.useThetaHSquared = bool(s, 'squareThetaH') ?? this.useThetaHSquared;
+    this.showChroma = bool(s, 'showChroma') ?? this.showChroma;
+    this.surfaceZoom = Math.max(0.35, Math.min(4.0, num(s, 'surfaceZoom') ?? this.surfaceZoom));
+    this.pinnedSample = null;
+    this.footer.replaceChildren();
+    this.buildControls();
+    this.requestRender();
+  }
+
+  /** phiD in radians, as used by the slice shader (for data export). */
+  phiD(): number {
+    return this.phiDdeg * DEG2RAD;
   }
 
   protected draw(): void {

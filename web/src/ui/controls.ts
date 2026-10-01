@@ -1,12 +1,28 @@
 ﻿// Small DOM control factories. Float = slider + numeric input with Ctrl+click
 // reset to default (matching the original's reset affordance), plus bool and
 // color controls.
+//
+// Every control row gets data-testid="ctl-<slug of label>" (scope it with the
+// view's data-testid="view-<key>" or the panel's "param-<name>"), and inputs get
+// aria-labels, so scripts and AI agents can find them reliably.
 
 import { clamp01, clampRgb, linearToSrgbRgb, srgbToLinearRgb, type Rgb } from './color-space.js';
+
+/** Stable identifier fragment for a control label ("Incident θ" -> "incident-theta"). */
+export function controlSlug(label: string): string {
+  return label
+    .replace(/θ/g, 'theta')
+    .replace(/φ/g, 'phi')
+    .replace(/[·°]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
 
 export function labeledRow(label: string, control: HTMLElement, description?: string): HTMLElement {
   const row = document.createElement('label');
   row.className = 'ctl-row';
+  row.dataset.testid = `ctl-${controlSlug(label)}`;
   if (description) row.title = description;
   const span = document.createElement('span');
   span.className = 'ctl-label';
@@ -39,6 +55,8 @@ export function floatControl(
   slider.max = String(max);
   slider.step = String(sliderStep);
   slider.value = String(round2(value));
+  slider.setAttribute('aria-label', `${label} slider`);
+  slider.dataset.role = 'slider';
 
   const num = document.createElement('input');
   num.type = 'number';
@@ -46,6 +64,8 @@ export function floatControl(
   num.max = String(max);
   num.step = String(numberStep);
   num.value = format(value);
+  num.setAttribute('aria-label', label);
+  num.dataset.role = 'value';
   slider.disabled = disabled;
   num.disabled = disabled;
 
@@ -87,6 +107,7 @@ export function boolControl(
   const cb = document.createElement('input');
   cb.type = 'checkbox';
   cb.checked = value;
+  cb.setAttribute('aria-label', label);
   if (description) cb.title = description;
   cb.addEventListener('change', () => onChange(cb.checked));
   return labeledRow(label, cb, description);
@@ -103,6 +124,7 @@ export function colorControl(
   let hsv = rgbToHsv(draft);
   const row = document.createElement('div');
   row.className = 'ctl-row';
+  row.dataset.testid = `ctl-${controlSlug(label)}`;
   const labelEl = document.createElement('span');
   labelEl.className = 'ctl-label';
   labelEl.textContent = label;
@@ -116,6 +138,7 @@ export function colorControl(
   swatch.type = 'button';
   swatch.className = 'ctl-color-swatch';
   swatch.title = 'Open color picker';
+  swatch.setAttribute('aria-label', `${label} color`);
 
   const popover = document.createElement('div');
   popover.className = 'color-popover';
@@ -320,6 +343,7 @@ export function selectControl(
   description?: string,
 ): HTMLElement {
   const sel = document.createElement('select');
+  sel.setAttribute('aria-label', label);
   if (description) sel.title = description;
   for (const o of options) {
     const opt = document.createElement('option');

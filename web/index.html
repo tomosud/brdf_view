@@ -20,11 +20,11 @@
           >
         </h1>
         <div id="toolbar">
-          <label class="btn">
+          <label class="btn" data-testid="open-brdf">
             Open BRDF…
-            <input id="file-input" type="file" accept=".brdf,.binary,.bsdf" multiple hidden />
+            <input id="file-input" data-testid="file-input" type="file" accept=".brdf,.binary,.bsdf" multiple hidden />
           </label>
-          <button id="load-sample-brdf" class="btn" type="button">Load sample Brdf</button>
+          <button id="load-sample-brdf" class="btn" type="button" data-testid="load-sample">Load sample Brdf</button>
           <a
             class="toolbar-link"
             href="https://www.merl.com/research/downloads/BRDF"
@@ -41,9 +41,9 @@
             title="Open the RGL-EPFL Material Database page for measured .bsdf BRDF files (download the RGB variant)."
             >RGL-EPFL Material Database</a
           >
-          <select id="sample-brdf-select" class="toolbar-select" hidden></select>
+          <select id="sample-brdf-select" class="toolbar-select" data-testid="sample-select" aria-label="Sample BRDF" hidden></select>
         </div>
-        <div id="parameter-panel"></div>
+        <div id="parameter-panel" data-testid="parameter-panel"></div>
       </aside>
       <div id="col-resizer" role="separator" aria-orientation="vertical" title="Resize sidebar"></div>
       <main id="views"></main>

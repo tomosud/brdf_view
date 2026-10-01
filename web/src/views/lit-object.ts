@@ -3,8 +3,10 @@
 // environment background. Modes: "No IBL" (directional light) and "IBL"
 // (cosine-weighted Monte-Carlo). Importance sampling (IBL IS/MIS) is future work.
 // Left-drag orbits, right-drag zooms, double-click resets.
+// "No IBL" lights the object with one directional light from the incident angle
+// (store incidentTheta/Phi, z-up like the other views) instead of the HDRI.
 
-import { BaseView } from './base-view.js';
+import { BaseView, DEG2RAD_, RAD2DEG, bool, num, obj, round6, str, type ViewState } from './base-view.js';
 import { BrdfProgramCache } from '../gl/brdf-program.js';
 import { buildProgram, Uniforms } from '../gl/renderer.js';
 import { loadTemplate } from '../brdf/shader-builder.js';
@@ -17,7 +19,7 @@ import type { HdrImage } from '../io/hdr.js';
 import type { Store } from '../state/store.js';
 
 const FOV_Y = 45.0;
-const MAX_ACCUM_FRAMES = 512;
+export const MAX_ACCUM_FRAMES = 512;
 
 interface RenderTarget {
   framebuffer: WebGLFramebuffer;
@@ -61,6 +63,8 @@ export class LitObjectView extends BaseView {
   private envSelectPopover: HTMLElement | null = null;
   private envSelectPreviewImg: HTMLImageElement | null = null;
   private envSelectPreviewName: HTMLElement | null = null;
+  /** Pending environment / mesh load, awaited before snapshots. */
+  private pendingLoad: Promise<void> = Promise.resolve();
 
   private readonly closeEnvironmentMenuOnWindowChange = () => this.closeEnvironmentMenu();
   private readonly closeEnvironmentMenuOnOutsidePointer = (e: PointerEvent) => {
@@ -79,7 +83,7 @@ export class LitObjectView extends BaseView {
     private objNames: string[] = [],
     private envThumbs: Record<string, string> = {},
   ) {
-    super(container, store, 'Lit Object');
+    super('litObject', container, store, 'Lit Object');
     const gl = this.gl;
     this.envName = envNames[0] ?? '';
 
@@ -121,9 +125,86 @@ export class LitObjectView extends BaseView {
         const program = buildProgram(gl, v, f, 'iblBackground');
         this.bg = { program, u: new Uniforms(gl, program) };
       });
-    Promise.all([this.cache.ready, bgReady]).then(() => this.requestRender()).catch((e) =>
-      console.error('IBL templates', e),
-    );
+    this.ready = Promise.all([this.cache.ready, bgReady]);
+    this.ready.then(() => this.requestRender()).catch((e) => console.error('IBL templates', e));
+  }
+
+  override getViewState(): ViewState {
+    return {
+      env: this.envName,
+      object: this.meshName,
+      ibl: this.renderWithIBL,
+      samples: this.numSamples,
+      gamma: round6(this.gamma),
+      exposure: round6(this.exposure),
+      hideBackground: this.hideBackground,
+      grayIBL: this.grayscaleIBL,
+      camera: {
+        theta: round6(this.lookTheta * RAD2DEG),
+        phi: round6(this.lookPhi * RAD2DEG),
+        zoom: round6(this.lookZoom),
+      },
+    };
+  }
+
+  override async applyViewState(s: ViewState): Promise<void> {
+    const loads: Promise<void>[] = [];
+    const env = str(s, 'env');
+    if (env && env !== this.envName) {
+      if (this.envNames.includes(env)) loads.push(this.loadEnvironment(env));
+      else console.warn(`Unknown environment "${env}" (available: ${this.envNames.join(', ')})`);
+    }
+    const object = str(s, 'object');
+    if (object && object !== this.meshName) {
+      if (object === 'sphere' || this.objNames.includes(object)) loads.push(this.loadObject(object));
+      else console.warn(`Unknown object "${object}" (available: sphere, ${this.objNames.join(', ')})`);
+    }
+    this.renderWithIBL = bool(s, 'ibl') ?? this.renderWithIBL;
+    const samples = num(s, 'samples');
+    if (samples !== undefined) this.numSamples = Math.max(1, Math.min(1024, Math.round(samples)));
+    this.gamma = num(s, 'gamma') ?? this.gamma;
+    this.exposure = num(s, 'exposure') ?? this.exposure;
+    this.hideBackground = bool(s, 'hideBackground') ?? this.hideBackground;
+    this.grayscaleIBL = bool(s, 'grayIBL') ?? this.grayscaleIBL;
+    const cam = obj(s, 'camera');
+    const theta = num(cam, 'theta');
+    const phi = num(cam, 'phi');
+    if (theta !== undefined) this.lookTheta = Math.max(0.05, Math.min(Math.PI - 0.05, theta * DEG2RAD_));
+    if (phi !== undefined) this.lookPhi = phi * DEG2RAD_;
+    this.lookZoom = Math.max(0.2, Math.min(5, num(cam, 'zoom') ?? this.lookZoom));
+    await Promise.all(loads);
+    this.closeEnvironmentMenu();
+    this.footer.replaceChildren();
+    this.buildControls();
+    this.lastStoreSig = this.storeSignature();
+    this.resetAccumulation();
+  }
+
+  /** Environment and object names this view can load. */
+  available(): { environments: string[]; objects: string[] } {
+    return { environments: [...this.envNames], objects: ['sphere', ...this.objNames] };
+  }
+
+  protected override async prepareSnapshot(): Promise<void> {
+    await this.pendingLoad;
+  }
+
+  /**
+   * IBL: restart accumulation and run exactly `frames` Monte-Carlo passes
+   * (default: the converged count used on screen), so the image is repeatable.
+   */
+  protected override renderSnapshot(options: { frames?: number }): void {
+    if (!this.renderWithIBL) {
+      this.renderFrame();
+      return;
+    }
+    const frames = Math.max(1, Math.min(MAX_ACCUM_FRAMES, Math.round(options.frames ?? MAX_ACCUM_FRAMES)));
+    this.accumFrame = 0;
+    this.accumRead = 0;
+    this.renderFrame(); // also (re)allocates the targets at the fixed size
+    this.accumFrame = 0;
+    this.accumRead = 0;
+    for (let i = 0; i < frames; i++) this.renderFrame();
   }
 
   private camera() {
@@ -365,7 +446,13 @@ export class LitObjectView extends BaseView {
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
   }
 
-  private async loadEnvironment(name: string): Promise<void> {
+  private loadEnvironment(name: string): Promise<void> {
+    const p = this.loadEnvironmentNow(name);
+    this.pendingLoad = this.pendingLoad.then(() => p);
+    return p;
+  }
+
+  private async loadEnvironmentNow(name: string): Promise<void> {
     if (!name) return;
     try {
       const res = await fetch(`${import.meta.env.BASE_URL}environments/${name}`);
@@ -379,7 +466,13 @@ export class LitObjectView extends BaseView {
     }
   }
 
-  private async loadObject(name: string): Promise<void> {
+  private loadObject(name: string): Promise<void> {
+    const p = this.loadObjectNow(name);
+    this.pendingLoad = this.pendingLoad.then(() => p);
+    return p;
+  }
+
+  private async loadObjectNow(name: string): Promise<void> {
     if (name === 'sphere') {
       this.meshName = name;
       this.setMesh(buildSphere(1.0, 100, 100));
@@ -401,6 +494,16 @@ export class LitObjectView extends BaseView {
     const iblChecks = document.createElement('div');
     iblChecks.className = 'compact-checks lit-object-checks';
     iblChecks.append(
+      boolControl(
+        'IBL',
+        this.renderWithIBL,
+        (v) => {
+          this.renderWithIBL = v;
+          this.lastStoreSig = this.storeSignature();
+          this.resetAccumulation();
+        },
+        'On: HDRI image-based lighting. Off: one directional light from the incident θ/φ (No IBL).',
+      ),
       boolControl('Hide BG IBL', this.hideBackground, (v) => {
         this.hideBackground = v;
         this.resetAccumulation();
