@@ -97,7 +97,7 @@ https://tomosud.github.io/brdf_view/#v=1&brdfs.0.file=callisto_brdf.brdf&brdfs.0
 | `setTexture(name, src, { brdf, fileName, channel, colorSpace })` | float / color のパラメータに画像を貼る（Lit Object のみ、メッシュの UV で貼る）。`src` は URL か data URL、`null` で外す。`channel` は float 用で `r` / `g` / `b` / `a`（既定 `r`。color は常に RGB）。`colorSpace` は画像の色空間 `srgb` / `linear`（既定: base color は `srgb`、それ以外は `linear`）。値は `.brdf` が期待する形に直す（color は sRGB の値、float はリニアの値）。状態や URL には入らない |
 | `setNormalMap(src, { brdf, fileName, flipY, strength })` | BRDF にタンジェント空間のノーマルマップを貼る（Lit Object のみ。既定は DirectX 形式 `flipY: true`、OpenGL 形式なら `flipY: false`。`strength` は XY の倍率、既定 1）。`null` で外す |
 | `listViews()` | `{ views, dataViews, environments, objects }` |
-| `render(view, { width, height, frames, supersample, background })` | PNG の data URL（表示用の画像。露出・ガンマ込み）。指定サイズで 1 回だけ描く（DPR・ウィンドウの大きさに依存しない。UI は写らない）。`litObject` の IBL は `frames` 回（既定 512 = 画面で収束する回数）積算してから返す。`occlusion: "ray"` では 1 回分を数フレームに分けて描く（サンプル数は同じ。GPU のタイムアウト対策）ので、時間は数十倍かかる（512×512、RTX 5090 で 15〜80 秒程度）。`supersample: n`（1〜8、既定 1）で n 倍の大きさに描いてリニアで縮小する（アンチエイリアス）。`background` は `'view'`（既定、ビュー本来の背景）、`'transparent'`（アルファ付き）、sRGB の `[r, g, b]`（`litObject` / `litSphere` のみ） |
+| `render(view, { width, height, frames, supersample, background })` | PNG の data URL（表示用の画像。露出・ガンマ込み）。指定サイズで 1 回だけ描く（DPR・ウィンドウの大きさに依存しない。UI は写らない）。`litObject` の IBL は `frames` 回（既定 512）積算してから返す。画面上の表示は、絵が変わらなくなった時点で積算を止めるが（下の「再現性と座標の注意」）、`render` は常に `frames` 回を積算する。`occlusion: "ray"` では 1 回分を数フレームに分けて描く（サンプル数は同じ。GPU のタイムアウト対策）ので、時間は数十倍かかる（512×512、RTX 5090 で 15〜80 秒程度）。`supersample: n`（1〜8、既定 1）で n 倍の大きさに描いてリニアで縮小する（アンチエイリアス）。`background` は `'view'`（既定、ビュー本来の背景）、`'transparent'`（アルファ付き）、sRGB の `[r, g, b]`（`litObject` / `litSphere` のみ） |
 | `evaluate(input, { brdf, params, component })` | BRDF の生の値（RGB）。`input` は `{ L, V, N?, X?, Y? }`（ベクトル）か `{ thetaL, phiL, thetaV, phiV }`（度。N/X/Y 基準）。配列を渡すと配列で返す。`params` は一時的な上書きで、状態は変えない。`component` は既定 `'brdf'`（`BRDF()`）。`'sssDiffuse'` / `'sssAlbedo'` で、疑似 SSS のフック関数（`BRDF_sss_diffuse` / `BRDF_sss_albedo`）の値を返す（フックを持たない `.brdf` ではエラー） |
 | `exportData(view, { format, resolution })` | プロットやスライスの数値。`format: 'csv'` で CSV 文字列、既定は JSON オブジェクト |
 | `errors()` | シェーダのコンパイル・リンクのエラー |
@@ -200,6 +200,7 @@ capture.bat --brdf callisto_brdf.brdf --set roughness=0.3 --save-state state.jso
 ## 5. 再現性と座標の注意
 
 - 同じ状態・同じサイズなら同じ画像になる（`render` は DPR に依存せず、アニメーションも無い）。IBL は `frames` 回の積算で止める。乱数列はフレーム番号と画素位置だけで決まる。ただし GPU やドライバが違えば、最下位ビットの差は出うる。コマンドラインは使った GPU を `WebGL renderer:` として表示する
+- 画面上の Lit Object（IBL）は、表示中の絵が変わらなくなると積算を止める（GPU を使わなくなる）。積算が 8、16、32… 回に達するたびに表示画像（8bit）を 128×128 の格子で読み、前回から 2/255 以上動いた画素が 1% 以下、6/255 以上動いた画素が無ければ止める。露出・ガンマ・トーンマップを変えると、読み取りをやり直して必要なら再開する。進み具合はキャンバス（`data-testid="canvas-litObject"`）の属性で分かる: `data-accum-frames`（積算したフレーム数）、`data-accum-state`（`running` / `stopped` = 早期に停止 / `done` = 全回数を積算、または IBL オフ）。`render()` とコマンドラインは早期に止めず、常に `frames` 回を積算するので、画像の再現性は変わらない
 - Lit Object の世界座標は y が上。入射光ベクトルは他のビューと同じ式 `(sinθ cosφ, sinθ sinφ, cosθ)` のまま使う。`litObject.camera = { theta: 90, phi: 90 }`（+z から正面を見る）にすると、光の θ は「カメラ方向からの角度」、φ は「画面右（0°）から上（90°）への回転」になる。頭部モデル `dm.obj` もこの向きで正面を向く
 - 平行光（`litObject.ibl = false`）の N·L は、全体の `plot.nDotL`（Multiply by N·L）に従う。照らされた見た目にしたいときは `plot.nDotL = true`
 - Lit Sphere は `doubleTheta`（既定オン）で光の θ を 2 倍にして描く。θ = 60° なら 120° から照らす

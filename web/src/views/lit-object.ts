@@ -39,6 +39,21 @@ const RAY_PIXEL_BUDGET = 512 * 512;
 const RAY_MAX_STEPS_PER_DRAW = 16;
 /** Shadow-ray origin offset, relative to the mesh radius. */
 const RAY_EPSILON = 1e-4;
+/**
+ * On-screen early stop of the accumulation (see LitObjectView.checkAutoStop):
+ * first reading at this many passes, then at every doubling.
+ */
+const AUTO_STOP_FIRST_PASS = 8;
+/** The displayed image is sampled on a grid of this many pixels per side. */
+const AUTO_STOP_PROBE_SIZE = 128;
+/**
+ * Samples (of PROBE_SIZE^2) that may still move by 2/255 or more between two
+ * readings: 1 %. Measured on the head model with ray-traced occlusion: 1.7 % at
+ * 16 passes, 0.6 % at 33, 0.24 % at 67 (the rest moves by 1/255 or not at all).
+ */
+const AUTO_STOP_MAX_MOVED = Math.round(AUTO_STOP_PROBE_SIZE * AUTO_STOP_PROBE_SIZE * 0.01);
+/** No sample may move by this much (in 1/255) between two readings. */
+const AUTO_STOP_LARGE_STEP = 6;
 /** Every mesh is scaled so that its largest dimension spans this many scene units. */
 const MESH_EXTENT = 2;
 /** Pseudo SSS: real size (cm) of the largest dimension when the mesh does not state one. */
@@ -427,23 +442,103 @@ export class LitObjectView extends BaseView {
       return;
     }
 
-    const present = (converged: boolean) =>
-      this.drawTextureToScreen(sss ? this.resolveSss(sss, 'accum', cam, h, converged) : this.accumTargets![this.accumRead].texture, w, h);
+    /** The image to show: the running average, through the pseudo SSS when it is on. */
+    const resolved = (converged: boolean) =>
+      sss ? this.resolveSss(sss, 'accum', cam, h, converged) : this.accumTargets![this.accumRead].texture;
 
     // Converged: re-present the accumulated image (applies current
     // gamma/exposure) without paying for another Monte-Carlo scene pass.
     const maxFrames = this.maxAccumFrames();
-    if (this.accumFrame >= maxFrames) {
-      present(true);
+    this.syncAutoStop();
+    if (this.accumFrame >= maxFrames || this.autoStop.stopped) {
+      this.drawTextureToScreen(resolved(true), w, h);
+      this.autoStop.lastFrame = this.accumFrame;
       this.updateAccumStatus(this.accumFrame);
       return;
     }
 
     const steps = this.accumStepsThisDraw();
     for (let i = 0; i < steps && this.accumFrame < maxFrames; i++) this.accumulateFrame(cam, w, h, maxFrames, sss);
-    present(this.accumFrame >= maxFrames);
+    let done = this.accumFrame >= maxFrames;
+    let texture = resolved(done);
+    if (!done && this.checkAutoStop(texture)) {
+      done = true;
+      texture = resolved(true);
+    }
+    this.drawTextureToScreen(texture, w, h);
+    this.autoStop.lastFrame = this.accumFrame;
     this.updateAccumStatus(this.accumFrame);
-    if (this.accumFrame < maxFrames) this.requestRender();
+    if (!done) this.requestRender();
+  }
+
+  /**
+   * On-screen accumulation stops early once the displayed image no longer
+   * changes: at pass counts 8, 16, 32, ... a coarse grid of the displayed
+   * (exposed, tone-mapped, 8-bit) image is read back and compared with the
+   * previous reading. When (almost) no sample moved by 2/255 or more while the
+   * sample count doubled, further passes would not be visible, so the view
+   * stops drawing and the GPU goes idle. Snapshots (render / capture) are not
+   * affected: they always run the requested number of passes.
+   */
+  private autoStop = {
+    stopped: false,
+    /** accumFrame at the end of the previous draw; a smaller value now means the accumulation restarted. */
+    lastFrame: 0,
+    nextPass: AUTO_STOP_FIRST_PASS,
+    previous: null as Uint8Array | null,
+    /** Display settings the readings were taken with. */
+    display: '',
+  };
+  private autoStopProbe: RenderTarget | null = null;
+
+  private displaySignature(): string {
+    return `${this.gamma}|${this.exposure}|${this.displayMode()}`;
+  }
+
+  /** Forget the readings when the accumulation restarted; resume when the display settings changed. */
+  private syncAutoStop(): void {
+    const a = this.autoStop;
+    if (this.accumFrame < a.lastFrame) {
+      a.stopped = false;
+      a.previous = null;
+      a.nextPass = AUTO_STOP_FIRST_PASS;
+    } else if (a.display !== this.displaySignature() && (a.stopped || a.previous)) {
+      // e.g. a higher exposure can make remaining noise visible again: take new readings from here on
+      a.stopped = false;
+      a.previous = null;
+      a.nextPass = Math.max(AUTO_STOP_FIRST_PASS, Math.floor(this.accumFrame / this.framesPerPass()));
+    }
+    a.display = this.displaySignature();
+  }
+
+  /** At a checkpoint, compare the displayed image with the previous checkpoint; true = stop accumulating. */
+  private checkAutoStop(texture: WebGLTexture): boolean {
+    const a = this.autoStop;
+    if (this.inSnapshot || this.interacting) return false;
+    const passes = Math.floor(this.accumFrame / this.framesPerPass());
+    if (passes < a.nextPass) return false;
+    a.nextPass = passes * 2;
+
+    const gl = this.gl;
+    this.autoStopProbe ??= createRenderTarget(gl, AUTO_STOP_PROBE_SIZE, AUTO_STOP_PROBE_SIZE, 'byte', false);
+    this.drawDisplay(texture, this.autoStopProbe.framebuffer, AUTO_STOP_PROBE_SIZE, AUTO_STOP_PROBE_SIZE);
+    const now = new Uint8Array(AUTO_STOP_PROBE_SIZE * AUTO_STOP_PROBE_SIZE * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.autoStopProbe.framebuffer);
+    gl.readPixels(0, 0, AUTO_STOP_PROBE_SIZE, AUTO_STOP_PROBE_SIZE, gl.RGBA, gl.UNSIGNED_BYTE, now);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    const before = a.previous;
+    a.previous = now;
+    if (!before) return false;
+    let moved = 0;
+    for (let i = 0; i < now.length; i += 4) {
+      const d = Math.max(Math.abs(now[i] - before[i]), Math.abs(now[i + 1] - before[i + 1]), Math.abs(now[i + 2] - before[i + 2]));
+      if (d >= AUTO_STOP_LARGE_STEP) return false;
+      if (d >= 2) moved++;
+    }
+    if (moved > AUTO_STOP_MAX_MOVED) return false;
+    a.stopped = true;
+    return true;
   }
 
   /** Draw one Monte-Carlo frame and fold it into the running average. */
@@ -652,8 +747,13 @@ export class LitObjectView extends BaseView {
   }
 
   private drawTextureToScreen(texture: WebGLTexture, w: number, h: number): void {
+    this.drawDisplay(texture, null, w, h);
+  }
+
+  /** Draw a linear texture with exposure / gamma / tone map into `framebuffer` (null = the canvas). */
+  private drawDisplay(texture: WebGLTexture, framebuffer: WebGLFramebuffer | null, w: number, h: number): void {
     const gl = this.gl;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
     gl.viewport(0, 0, w, h);
     gl.disable(gl.DEPTH_TEST);
     gl.depthMask(false);
@@ -695,8 +795,17 @@ export class LitObjectView extends BaseView {
     this.requestRender();
   }
 
+  /**
+   * Expose the accumulation progress on the canvas for tools and tests:
+   * data-accum-frames = frames averaged so far (0 without IBL), data-accum-state =
+   * "running" | "stopped" (early stop: the displayed image no longer changes) | "done" (all passes).
+   */
   private updateAccumStatus(frames: number): void {
-    void frames;
+    const state = !this.renderWithIBL || frames >= this.maxAccumFrames() ? 'done' : this.autoStop.stopped ? 'stopped' : 'running';
+    const data = this.canvas.dataset;
+    if (data.accumState !== state) data.accumState = state;
+    const text = String(frames);
+    if (data.accumFrames !== text) data.accumFrames = text;
   }
 
   private disposeTarget(target: RenderTarget | null): void {
@@ -712,6 +821,7 @@ export class LitObjectView extends BaseView {
     this.closeEnvironmentMenu();
     this.resetUnsub?.();
     this.sss?.dispose();
+    this.disposeTarget(this.autoStopProbe);
   }
 
   private setMesh(mesh: IndexedMesh): void {
