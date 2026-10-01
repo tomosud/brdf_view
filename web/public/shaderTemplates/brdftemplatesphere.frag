@@ -11,6 +11,8 @@ uniform float incidentPhi;
 uniform float brightness;
 uniform float gamma;
 uniform float exposure;
+
+::INSERT_TONEMAP_HERE::
 uniform float useNDotL;
 
 in vec4 worldSpaceVert;
@@ -55,8 +57,6 @@ void main(void)
     // exposure
     b *= pow( 2.0, exposure );
 
-    // gamma
-    b = pow( b, vec3( 1.0 / gamma ) );
-
-    fragColor = vec4( clamp( b, vec3(0.0), vec3(1.0) ), 1.0 );
+    // gamma or tone map (src/gl/tonemap.ts), then clamp (0-1 for SDR)
+    fragColor = vec4( displayLimit( displayEncode( b, gamma ) ), 1.0 );
 }

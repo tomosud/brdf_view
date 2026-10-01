@@ -21,6 +21,7 @@ BRDF Explorer Web を、人の手を介さずに操作するための入口は 3
   ],
   "light": { "theta": 45, "phi": 45 },
   "plot": { "channel": "luminance", "logPlot": true, "nDotL": false },
+  "display": { "toneMap": false, "hdr": false },
   "plot3d":    { "camera": { "theta": 45, "phi": 0, "zoom": 4 } },
   "polar":     { "view": { "centerX": 0, "centerY": 0.75, "zoom": 1 } },
   "cartesian": { "mode": "thetaV", "phiV": 45, "lock": true, "fixedAngle": 0,
@@ -28,7 +29,7 @@ BRDF Explorer Web を、人の手を介さずに操作するための入口は 3
   "slice":     { "mode": "image", "phiD": 90, "gamma": 2.2, "exposure": 0, "height": 0.065,
                  "squareThetaH": false, "showChroma": false, "surfaceZoom": 1 },
   "litObject": { "env": "ibl.hdr", "object": "sphere", "ibl": true, "samples": 128, "gamma": 2.2, "exposure": 0,
-                 "hideBackground": false, "grayIBL": false, "camera": { "theta": 68.75, "phi": 34.38, "zoom": 1 } },
+                 "hideBackground": false, "grayIBL": false, "occlusion": "sh", "camera": { "theta": 68.75, "phi": 34.38, "zoom": 1 } },
   "litSphere": { "brightness": 1, "gamma": 2.2, "exposure": 0, "doubleTheta": true, "nDotL": true }
 }
 ```
@@ -40,9 +41,12 @@ BRDF Explorer Web を、人の手を介さずに操作するための入口は 3
 | `brdfs[].params` | パラメータの値。`float` は数値、`bool` は `true/false`、`color` は `[r,g,b]`（シェーダに渡す生の値。UI の sRGB 欄と同じ数） |
 | `light.theta / phi` | 入射光の角度（UI の Incident θ / φ）。θ は法線 +z から、φ は +x から |
 | `plot` | `channel`（`red` / `green` / `blue` / `luminance`）、`logPlot`、`nDotL`（UI の「Multiply by N·L」） |
+| `display.toneMap` | `true` で Lit Object・Lit Sphere・Image Slice の表示に ACES 2.0 のトーンマップ（SDR 100 nits、Rec.709、sRGB）をかける（既定 `false`、ツールバーの「Tone map (ACES 2.0)」、`data-testid="ctl-tone-map"`）。オンの間は各ビューの `gamma` を使わない。`render()` の PNG にも反映される |
+| `display.hdr` | `true` で同じ 3 つのビューを HDR で表示する（既定 `false`、ツールバーの「HDR」、`data-testid="ctl-hdr"`）。1.0 = SDR の白 = 203 nits。`toneMap` もオンなら ACES 2.0 の 1000 nits・P3-D65 版。HDR 表示でない画面では SDR で表示する。`render()` / `capture.bat` の PNG は常に SDR（この値に関係なく同じ画像） |
 | `plot3d` ほか | 各ビューの下にある操作部品とカメラ |
 | `litObject.ibl` | `true` = HDRI による IBL（従来の表示）。`false` = 入射光の角度からの平行光 1 つ（新しく UI にも「IBL」チェックを追加） |
 | `litObject.samples` | IBL の 1 パスあたりのサンプル数（既定 128） |
+| `litObject.occlusion` | IBL でのモデル自身による遮蔽（UI の「Occlusion」）。`"off"`（なし）、`"sh"`（既定。読み込み時に頂点ごとに事前計算した近似）、`"ray"`（サンプルごとに影のレイを飛ばす正確な判定。重く、収束に時間がかかる）。以前の形式の `true` は `"sh"`、`false` は `"off"` として読む。平行光（`ibl: false`）には効かない |
 
 `setState` の決まり:
 
@@ -90,7 +94,7 @@ https://tomosud.github.io/brdf_view/#v=1&brdfs.0.file=callisto_brdf.brdf&brdfs.0
 | `setTexture(name, src, { brdf, fileName, channel, colorSpace })` | float / color のパラメータに画像を貼る（Lit Object のみ、メッシュの UV で貼る）。`src` は URL か data URL、`null` で外す。`channel` は float 用で `r` / `g` / `b` / `a`（既定 `r`。color は常に RGB）。`colorSpace` は画像の色空間 `srgb` / `linear`（既定: base color は `srgb`、それ以外は `linear`）。値は `.brdf` が期待する形に直す（color は sRGB の値、float はリニアの値）。状態や URL には入らない |
 | `setNormalMap(src, { brdf, fileName, flipY, strength })` | BRDF にタンジェント空間のノーマルマップを貼る（Lit Object のみ。既定は DirectX 形式 `flipY: true`、OpenGL 形式なら `flipY: false`。`strength` は XY の倍率、既定 1）。`null` で外す |
 | `listViews()` | `{ views, dataViews, environments, objects }` |
-| `render(view, { width, height, frames, supersample, background })` | PNG の data URL（表示用の画像。露出・ガンマ込み）。指定サイズで 1 回だけ描く（DPR・ウィンドウの大きさに依存しない。UI は写らない）。`litObject` の IBL は `frames` 回（既定 512 = 画面で収束する回数）積算してから返す。`supersample: n`（1〜8、既定 1）で n 倍の大きさに描いてリニアで縮小する（アンチエイリアス）。`background` は `'view'`（既定、ビュー本来の背景）、`'transparent'`（アルファ付き）、sRGB の `[r, g, b]`（`litObject` / `litSphere` のみ） |
+| `render(view, { width, height, frames, supersample, background })` | PNG の data URL（表示用の画像。露出・ガンマ込み）。指定サイズで 1 回だけ描く（DPR・ウィンドウの大きさに依存しない。UI は写らない）。`litObject` の IBL は `frames` 回（既定 512 = 画面で収束する回数）積算してから返す。`occlusion: "ray"` では 1 回分を数フレームに分けて描く（サンプル数は同じ。GPU のタイムアウト対策）ので、時間は数十倍かかる（512×512、RTX 5090 で 15〜80 秒程度）。`supersample: n`（1〜8、既定 1）で n 倍の大きさに描いてリニアで縮小する（アンチエイリアス）。`background` は `'view'`（既定、ビュー本来の背景）、`'transparent'`（アルファ付き）、sRGB の `[r, g, b]`（`litObject` / `litSphere` のみ） |
 | `evaluate(input, { brdf, params })` | BRDF の生の値（RGB）。`input` は `{ L, V, N?, X?, Y? }`（ベクトル）か `{ thetaL, phiL, thetaV, phiV }`（度。N/X/Y 基準）。配列を渡すと配列で返す。`params` は一時的な上書きで、状態は変えない |
 | `exportData(view, { format, resolution })` | プロットやスライスの数値。`format: 'csv'` で CSV 文字列、既定は JSON オブジェクト |
 | `errors()` | シェーダのコンパイル・リンクのエラー |
@@ -160,7 +164,7 @@ capture.bat --brdf callisto_brdf.brdf --set roughness=0.3 --save-state state.jso
 | `--normal-map` / `--normal-gl` / `--normal-strength` | ノーマルマップ（Lit Object）。既定は DirectX 形式、`--normal-gl` で OpenGL 形式。バッチでは `normalMap` / `normalFlipY`（既定 true）/ `normalStrength` |
 | `--view` / `--out` | 撮るビュー（複数可、`page` は画面全体）と PNG の保存先 |
 | `--width` / `--height` | 画像のサイズ（既定 512×512。`page` はウィンドウの大きさ、既定 1600×1000） |
-| `--frames` | `litObject` の IBL の積算回数（既定 512） |
+| `--frames` | `litObject` の IBL の積算回数（既定 512）。`litObject.occlusion=ray` では収束までの時間が長いので、下書きには `--frames 32` などで減らす |
 | `--supersample <n>` | アンチエイリアス。n 倍で描いて縮小（1〜8、既定 1） |
 | `--background <bg>` | `view`（既定）/ `transparent` / `r,g,b`（sRGB 0〜1）。`litObject` / `litSphere` のみ |
 | `--figure` | 文書用の見本画像のプリセット。`--supersample 4`、`litObject` / `litSphere` は背景を透過（明示した値が優先） |

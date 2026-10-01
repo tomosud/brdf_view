@@ -18,6 +18,7 @@ import { scheduleSave, restoreSession, restoreImages } from './state/persist.js'
 import { installApi } from './api/index.js';
 import { applyState, stateFromLocation, type ViewMap } from './api/state.js';
 import { mountStateTools } from './ui/state-tools.js';
+import { mountToneMapToggle } from './ui/tone-map-toggle.js';
 import { startUrlSync } from './ui/url-sync.js';
 import type { BaseView } from './views/base-view.js';
 
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
   const ready = new Promise<void>((resolve) => (markReady = resolve));
   installApi(store, viewMap, ready);
   mountStateTools(document.getElementById('toolbar')!);
+  mountToneMapToggle(document.getElementById('toolbar')!, store);
   mountParameterPanel(document.getElementById('parameter-panel')!, store);
 
   const views = document.getElementById('views')!;

@@ -8,6 +8,7 @@
 //                { "name": "my.brdf", "source": "<.brdf text>", "visible": false } ],
 //     "light": { "theta": 45, "phi": 45 },
 //     "plot": { "channel": "luminance", "logPlot": true, "nDotL": false },
+//     "display": { "toneMap": false, "hdr": false },
 //     "plot3d": {...}, "polar": {...}, "cartesian": {...}, "slice": {...},
 //     "litObject": {...}, "litSphere": {...}
 //   }
@@ -49,6 +50,8 @@ export interface ViewerState {
   brdfs?: BrdfEntryState[];
   light?: { theta?: number; phi?: number };
   plot?: { channel?: Channel; logPlot?: boolean; nDotL?: boolean };
+  /** Display transform of Lit Object / Lit Sphere / Image Slice (toneMap: ACES 2.0 SDR). */
+  display?: { toneMap?: boolean; hdr?: boolean };
   plot3d?: ViewState;
   polar?: ViewState;
   cartesian?: ViewState;
@@ -69,6 +72,7 @@ export function collectState(store: Store, views: ViewMap): ViewerState {
     brdfs: s.brdfs.map(entryFromInstance),
     light: { theta: round6((s.incidentTheta * 180) / Math.PI), phi: round6((s.incidentPhi * 180) / Math.PI) },
     plot: { channel: s.channel, logPlot: s.useLogPlot, nDotL: s.useNDotL },
+    display: { toneMap: s.toneMap, hdr: s.hdr },
   };
   for (const key of VIEW_KEYS) {
     const view = views[key];
@@ -165,6 +169,10 @@ export async function applyState(store: Store, views: ViewMap, state: ViewerStat
     }
     s.useLogPlot = bool(state.plot, 'logPlot') ?? s.useLogPlot;
     s.useNDotL = bool(state.plot, 'nDotL') ?? s.useNDotL;
+  }
+  if (state.display && typeof state.display === 'object') {
+    s.toneMap = bool(state.display, 'toneMap') ?? s.toneMap;
+    s.hdr = bool(state.display, 'hdr') ?? s.hdr;
   }
 
   if (brdfs) store.setBrdfs(brdfs);

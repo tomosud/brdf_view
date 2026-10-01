@@ -76,6 +76,14 @@ html, body {
   cursor: pointer;
 }
 .btn:hover { background: #3d3d3d; }
+.toolbar-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.toolbar-check input { margin: 0; }
+.toolbar-check-inactive { opacity: 0.6; text-decoration: line-through; }
+.ctl-row.ctl-disabled { opacity: 0.45; }
 .toolbar-select {
   flex: 1 1 100%;
   min-width: 0;

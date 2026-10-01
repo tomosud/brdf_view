@@ -5,6 +5,8 @@ uniform float gamma;
 uniform float showChroma;
 uniform float useLogPlot;
 
+::INSERT_TONEMAP_HERE::
+
 in vec3 hdrColor;
 in float heightValue;
 
@@ -22,7 +24,7 @@ void main()
         float mapped = log(max(luma, 0.0) + 1.0);
         b *= luma > 0.0 ? mapped / luma : 0.0;
     }
-    b = pow(max(b, vec3(0.0)), vec3(1.0 / gamma));
+    b = displayEncode(b, gamma);
     float shade = 0.65 + 0.35 * clamp(heightValue * 0.8 + 0.2, 0.0, 1.0);
-    fragColor = vec4(clamp(b * shade, 0.0, 1.0), 1.0);
+    fragColor = vec4(displayLimit(b * shade), 1.0);
 }

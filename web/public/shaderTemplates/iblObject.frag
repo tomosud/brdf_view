@@ -6,6 +6,9 @@
 //                          around the mirror direction, and environment-map
 //                          luminance sampling. It evaluates with the mixture pdf:
 //                          BRDF * env * cos / pdf.
+//                          Self-occlusion (occlusionMode): 1 weights each sample
+//                          by the baked per-vertex visibility V(L) (SH), 2 traces
+//                          a shadow ray against the mesh BVH (any hit).
 // The injected analytic/measured BRDF is evaluated per sample.
 precision highp float;
 precision highp int;
@@ -27,11 +30,23 @@ uniform sampler2D normalMap;
 uniform float useNormalMap;
 uniform float normalFlipY;
 uniform float normalStrength;
+// 0 off, 1 baked SH (vOcc*), 2 ray traced against the BVH (bvhNodes / bvhTris).
+uniform int occlusionMode;
+// BVH packed by src/gl/bvh.ts (RGBA32F, 2048 texels per row).
+uniform highp sampler2D bvhNodes;
+uniform highp sampler2D bvhTris;
+// Shadow-ray origin offset along the geometric normal (scaled to the mesh).
+uniform float rayEpsilon;
 
 in vec3 wNormal;
 in vec3 wPos;
 in vec2 vUV; // mesh texture coordinates (parameter images, normal map)
 in vec4 wTangent;
+// Occlusion SH coefficients (l <= 3), baked by src/gl/visibility-bake.ts.
+in vec4 vOcc0;
+in vec4 vOcc1;
+in vec4 vOcc2;
+in vec4 vOcc3;
 
 out vec4 fragColor;
 
@@ -130,6 +145,85 @@ float hash(vec2 p)
     return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
+// Blocked fraction toward d from the baked occlusion SH. The real SH basis
+// must match ACCUM_FRAG in src/gl/visibility-bake.ts.
+float occlusionSH(vec3 d)
+{
+    float x = d.x, y = d.y, z = d.z;
+    float o = dot(vOcc0, vec4(0.282095, 0.488603 * y, 0.488603 * z, 0.488603 * x));
+    o += dot(vOcc1, vec4(1.092548 * x * y, 1.092548 * y * z, 0.315392 * (3.0 * z * z - 1.0), 1.092548 * x * z));
+    o += dot(vOcc2, vec4(0.546274 * (x * x - y * y), 0.590044 * y * (3.0 * x * x - y * y), 2.890611 * x * y * z, 0.457046 * y * (5.0 * z * z - 1.0)));
+    o += dot(vOcc3, vec4(0.373176 * z * (5.0 * z * z - 3.0), 0.457046 * x * (5.0 * z * z - 1.0), 1.445306 * z * (x * x - y * y), 0.590044 * x * (x * x - 3.0 * y * y)));
+    return clamp(o, 0.0, 1.0);
+}
+
+// --- ray-traced occlusion (BVH layout: see src/gl/bvh.ts) ---
+const int BVH_STACK_SIZE = 48; // BVH_MAX_DEPTH in src/gl/bvh.ts
+const int BVH_MAX_STEPS = 4096; // safety cap; an unfinished ray counts as visible
+
+ivec2 bvhTexel(int i)
+{
+    return ivec2(i & 2047, i >> 11); // BVH_TEXTURE_WIDTH = 2048
+}
+
+// Moller-Trumbore, front faces only (triangles are wound along the vertex normals).
+bool rayHitsTriangle(int tri, vec3 o, vec3 d)
+{
+    vec3 v0 = texelFetch(bvhTris, bvhTexel(3 * tri), 0).xyz;
+    vec3 e1 = texelFetch(bvhTris, bvhTexel(3 * tri + 1), 0).xyz;
+    vec3 e2 = texelFetch(bvhTris, bvhTexel(3 * tri + 2), 0).xyz;
+    vec3 p = cross(d, e2);
+    float det = dot(e1, p);
+    if (det <= 0.0) return false;
+    vec3 s = o - v0;
+    float u = dot(s, p);
+    if (u < 0.0 || u > det) return false;
+    vec3 q = cross(s, e1);
+    float v = dot(d, q);
+    if (v < 0.0 || u + v > det) return false;
+    return dot(e2, q) > 0.0;
+}
+
+// Any-hit traversal: true as soon as the ray from o along d hits a front face.
+bool occludedRay(vec3 o, vec3 d)
+{
+    vec3 dirSign = mix(vec3(-1.0), vec3(1.0), step(0.0, d));
+    vec3 invD = 1.0 / (dirSign * max(abs(d), vec3(1e-12)));
+    int stack[BVH_STACK_SIZE];
+    int sp = 0;
+    int node = 0;
+    for (int iter = 0; iter < BVH_MAX_STEPS; iter++) {
+        vec4 lo = texelFetch(bvhNodes, bvhTexel(2 * node), 0);
+        vec4 hi = texelFetch(bvhNodes, bvhTexel(2 * node + 1), 0);
+        vec3 t0 = (lo.xyz - o) * invD;
+        vec3 t1 = (hi.xyz - o) * invD;
+        vec3 tn = min(t0, t1);
+        vec3 tf = max(t0, t1);
+        float tNear = max(max(tn.x, tn.y), max(tn.z, 0.0));
+        float tFar = min(min(tf.x, tf.y), tf.z);
+        if (tNear <= tFar) {
+            int count = int(hi.w);
+            if (count == 0) {
+                // internal: visit the left child (node + 1) now, the right one later
+                if (sp < BVH_STACK_SIZE) {
+                    stack[sp] = int(lo.w);
+                    sp++;
+                }
+                node++;
+                continue;
+            }
+            int first = int(lo.w);
+            for (int k = 0; k < count; k++) {
+                if (rayHitsTriangle(first + k, o, d)) return true;
+            }
+        }
+        if (sp == 0) return false;
+        sp--;
+        node = stack[sp];
+    }
+    return false;
+}
+
 void buildTBN(vec3 N, out vec3 T, out vec3 B)
 {
     vec3 up = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
@@ -170,6 +264,14 @@ void main(void)
     ::INSERT_TEXTURE_FETCH_HERE::
 
     vec3 N = normalize(wNormal);
+    // Geometric (flat) normal of this triangle, on the side of the vertex normal.
+    // Shadow rays start just off this plane: above it for rays leaving the
+    // surface, just below it for rays the smooth normal allows but the facet
+    // does not (they then only meet back faces of a convex neighbourhood, which
+    // the any-hit test ignores; this avoids the shadow-terminator artefact).
+    vec3 Ng = cross(dFdx(wPos), dFdy(wPos));
+    Ng = dot(Ng, Ng) > 0.0 ? normalize(Ng) : N;
+    if (dot(Ng, N) < 0.0) Ng = -Ng;
     if (useNormalMap > 0.5) {
         vec3 T = wTangent.xyz - N * dot(N, wTangent.xyz);
         if (dot(T, T) > 1e-12) {
@@ -220,9 +322,18 @@ void main(void)
             float pdf = (cosinePdf + mediumPdf + sharpPdf + envPdf) / 4.0;
             if (nDotL <= 0.0 || pdf <= 0.0) continue;
 
+            float visibility = occlusionMode == 1 ? 1.0 - occlusionSH(L) : 1.0;
+            if (visibility <= 0.0) continue;
+
             vec3 env = sampleEnv(L);
             vec3 b = max(BRDF(L, V, N, X, Y), vec3(0.0));
-            result += b * env * nDotL / pdf;
+            vec3 contribution = b * env * nDotL * visibility / pdf;
+            // Ray: trace only samples that would add light.
+            if (occlusionMode == 2 && max(contribution.r, max(contribution.g, contribution.b)) > 0.0) {
+                vec3 origin = wPos + Ng * (dot(Ng, L) >= 0.0 ? rayEpsilon : -rayEpsilon);
+                if (occludedRay(origin, L)) continue;
+            }
+            result += contribution;
         }
         result /= float(numSamples);
     } else {

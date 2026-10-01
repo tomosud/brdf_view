@@ -38,6 +38,10 @@ export interface AppState {
   channel: Channel;
   useLogPlot: boolean;
   useNDotL: boolean;
+  /** Display tone mapping (ACES 2.0 SDR) in Lit Object, Lit Sphere and Image Slice. */
+  toneMap: boolean;
+  /** HDR output of the same views (float16 canvas; only on an HDR display). */
+  hdr: boolean;
   incidentTheta: number;
   incidentPhi: number;
   soloId: string | null;
@@ -53,6 +57,8 @@ export class Store {
     channel: 'luminance',
     useLogPlot: true,
     useNDotL: false,
+    toneMap: false,
+    hdr: false,
     incidentTheta: 0.785398163,
     incidentPhi: 0.785398163,
     soloId: null,

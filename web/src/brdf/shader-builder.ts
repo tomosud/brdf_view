@@ -22,6 +22,7 @@ export interface TextureBinding {
   convert: 'none' | 'toLinear' | 'toSrgb';
 }
 import { MITER_GLSL } from '../gl/line-expansion.js';
+import { TONEMAP_GLSL } from '../gl/tonemap.js';
 
 export function uniformDecls(params: ParamDef[], bindings: readonly TextureBinding[] = []): string {
   const textured = new Set(bindings.map((b) => b.name));
@@ -119,6 +120,8 @@ export function injectTemplate(template: string, def: BrdfDef, bindings: readonl
     .join(isFunc)
     .split('::INSERT_MITER_HERE::')
     .join(MITER_GLSL)
+    .split('::INSERT_TONEMAP_HERE::')
+    .join(TONEMAP_GLSL)
     .split('::INSERT_TEXTURE_FETCH_HERE::')
     .join(textureFetches(def.params, bindings));
 }

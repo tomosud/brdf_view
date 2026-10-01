@@ -7,6 +7,7 @@ import { BaseView, bool, num, round6, type ViewState } from './base-view.js';
 import { BrdfProgramCache } from '../gl/brdf-program.js';
 import { buildSphere } from '../gl/mesh.js';
 import { ortho, lookAt } from '../gl/mat4.js';
+import { ToneMapper } from '../gl/tonemap.js';
 import { floatControl, boolControl } from '../ui/controls.js';
 import type { Store } from '../state/store.js';
 
@@ -18,6 +19,8 @@ const VIEW_GRAY_SRGB = 0.5;
 export class LitSphereView extends BaseView {
   protected override readonly supportsBackgroundOverride = true;
   private cache: BrdfProgramCache;
+  private toneMapper = new ToneMapper(this.gl);
+  protected override readonly supportsHdr = true;
   private posVBO: WebGLBuffer;
   private idxVBO: WebGLBuffer;
   private indexCount: number;
@@ -111,6 +114,7 @@ export class LitSphereView extends BaseView {
     prog.u.f('brightness', this.brightness);
     prog.u.f('gamma', this.gamma);
     prog.u.f('exposure', this.exposure);
+    this.toneMapper.apply(prog.u, this.displayMode());
     prog.u.f('useNDotL', this.useNDotL ? 1 : 0);
     this.cache.applyParams(prog.u, pkg.instance);
 
@@ -144,6 +148,7 @@ export class LitSphereView extends BaseView {
         this.requestRender();
       }),
     );
+    this.syncToneMapControls();
   }
 
   private setupInteraction(): void {

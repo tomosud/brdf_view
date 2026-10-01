@@ -8,6 +8,7 @@ import { BrdfProgramCache } from '../gl/brdf-program.js';
 import { buildProgram, Uniforms } from '../gl/renderer.js';
 import { createEmptyVAO } from '../gl/line-expansion.js';
 import { perspective, lookAt, DEG2RAD } from '../gl/mat4.js';
+import { TONEMAP_GLSL, ToneMapper } from '../gl/tonemap.js';
 import { floatControl, boolControl, selectControl } from '../ui/controls.js';
 import type { Store } from '../state/store.js';
 
@@ -28,6 +29,8 @@ interface SamplePoint {
 
 export class ImageSliceView extends BaseView {
   private rawCache: BrdfProgramCache;
+  private toneMapper = new ToneMapper(this.gl);
+  protected override readonly supportsHdr = true;
   private surfaceCache: BrdfProgramCache;
   private display: { program: WebGLProgram; u: Uniforms };
   private vao: WebGLVertexArrayObject;
@@ -153,6 +156,7 @@ export class ImageSliceView extends BaseView {
     gl.bindTexture(gl.TEXTURE_2D, this.target!.texture);
     this.display.u.i('sourceTex', 0);
     this.display.u.f('gamma', this.gamma);
+    this.toneMapper.apply(this.display.u, this.displayMode());
     this.display.u.f('showChroma', this.showChroma ? 1 : 0);
     this.display.u.f('useLogPlot', this.store.state.useLogPlot ? 1 : 0);
     gl.bindVertexArray(this.vao);
@@ -187,6 +191,7 @@ export class ImageSliceView extends BaseView {
     prog.u.m4('modelViewMatrix', mv);
     this.applySliceUniforms(prog.u);
     prog.u.f('gamma', this.gamma);
+    this.toneMapper.apply(prog.u, this.displayMode());
     prog.u.f('showChroma', this.showChroma ? 1 : 0);
     prog.u.f('heightScale', this.heightScale);
     prog.u.f('useLogPlot', this.store.state.useLogPlot ? 1 : 0);
@@ -273,6 +278,7 @@ export class ImageSliceView extends BaseView {
       readoutRow,
     );
     this.footer.append(grid);
+    this.syncToneMapControls();
   }
 
   private setupReadout(): void {
@@ -440,6 +446,7 @@ void main() {
 
 const DISPLAY_FRAG = `#version 300 es
 precision highp float;
+${TONEMAP_GLSL}
 uniform sampler2D sourceTex;
 uniform float gamma;
 uniform float showChroma;
@@ -457,7 +464,6 @@ void main() {
     float mapped = log(max(luma, 0.0) + 1.0);
     b *= luma > 0.0 ? mapped / luma : 0.0;
   }
-  b = pow(max(b, vec3(0.0)), vec3(1.0 / gamma));
-  fragColor = vec4(clamp(b, 0.0, 1.0), 1.0);
+  fragColor = vec4(displayLimit(displayEncode(b, gamma)), 1.0);
 }
 `;

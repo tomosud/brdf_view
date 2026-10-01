@@ -7,6 +7,7 @@
 // and can render one frame at a fixed backing-store size (snapshot).
 
 import { resizeToDisplay } from '../gl/renderer.js';
+import { hdrCanvasSupported, hdrDisplayActive, type DisplayMode } from '../gl/tonemap.js';
 import type { Store } from '../state/store.js';
 
 /** Stable view identifiers used by the state JSON, the URL and the API. */
@@ -60,7 +61,19 @@ export abstract class BaseView {
     this.gl = gl;
 
     new ResizeObserver(() => this.requestRender()).observe(this.canvas);
-    this.unsub = store.subscribe(() => this.requestRender());
+    this.unsub = store.subscribe(() => {
+      this.requestRender();
+      this.syncToneMapControls();
+    });
+  }
+
+  /** Gamma has no effect while tone mapping is on (the output is sRGB encoded). */
+  protected syncToneMapControls(): void {
+    const row = this.footer.querySelector<HTMLElement>('[data-testid="ctl-gamma"]');
+    if (!row) return;
+    const on = this.store.state.toneMap;
+    for (const input of row.querySelectorAll('input')) input.disabled = on;
+    row.classList.toggle('ctl-disabled', on);
   }
 
   protected setViewTitle(title: string, description?: string): void {
@@ -92,7 +105,46 @@ export abstract class BaseView {
     } else if (resizeToDisplay(this.canvas)) {
       this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     }
+    this.syncDrawingBuffer();
     this.draw();
+  }
+
+  /** Views whose display pass supports HDR output (src/gl/tonemap.ts DisplayMode 2 / 3). */
+  protected readonly supportsHdr: boolean = false;
+
+  /** HDR output this frame: the HDR toggle is on, the window is on an HDR display, not a snapshot (PNGs stay SDR). */
+  protected hdrOutput(): boolean {
+    return this.supportsHdr && this.store.state.hdr && !this.snapshotting && hdrCanvasSupported() && hdrDisplayActive();
+  }
+
+  /** Display transform for the shaders' toneMapMode. */
+  protected displayMode(): DisplayMode {
+    const toneMap = this.store.state.toneMap;
+    if (this.hdrOutput()) return toneMap ? 2 : 3;
+    return toneMap ? 1 : 0;
+  }
+
+  /**
+   * HDR: a float16 drawing buffer, read by Chrome as extended sRGB (1.0 = SDR
+   * white); display-p3 for the ACES HDR transform (P3-D65 limited). SDR: the
+   * default RGBA8 sRGB buffer.
+   */
+  private syncDrawingBuffer(): void {
+    if (!this.supportsHdr || !hdrCanvasSupported()) return;
+    const gl = this.gl as WebGL2RenderingContext & {
+      drawingBufferStorage(format: number, width: number, height: number): void;
+      drawingBufferFormat: number;
+    };
+    const hdr = this.hdrOutput();
+    const format = hdr ? gl.RGBA16F : gl.RGBA8;
+    const { width, height } = this.canvas;
+    if (gl.drawingBufferFormat !== format || gl.drawingBufferWidth !== width || gl.drawingBufferHeight !== height) {
+      if (hdr) gl.getExtension('EXT_color_buffer_half_float');
+      gl.drawingBufferStorage(format, width, height);
+      gl.viewport(0, 0, width, height);
+    }
+    const colorSpace: PredefinedColorSpace = hdr && this.store.state.toneMap ? 'display-p3' : 'srgb';
+    if (gl.drawingBufferColorSpace !== colorSpace) gl.drawingBufferColorSpace = colorSpace;
   }
 
   /**

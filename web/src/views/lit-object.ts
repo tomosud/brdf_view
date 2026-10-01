@@ -7,20 +7,41 @@
 // (store incidentTheta/Phi, z-up like the other views) instead of the HDRI.
 
 import { BaseView, DEG2RAD_, RAD2DEG, bool, num, obj, round6, str, type ViewState } from './base-view.js';
-import { BrdfProgramCache, NORMAL_MAP_UNIT } from '../gl/brdf-program.js';
+import { BrdfProgramCache, BVH_NODE_UNIT, BVH_TRI_UNIT, NORMAL_MAP_UNIT } from '../gl/brdf-program.js';
 import { textureBindings } from '../brdf/param-texture.js';
 import { buildProgram, Uniforms } from '../gl/renderer.js';
 import { loadTemplate } from '../brdf/shader-builder.js';
 import { uploadEnv, type EnvTexture } from '../gl/env-texture.js';
 import { buildSphere, computeTangents, parseObjMesh, type IndexedMesh } from '../gl/mesh.js';
+import { bakeOcclusionSH, OCCLUSION_SH_COEFFS } from '../gl/visibility-bake.js';
+import { BVH_TEXTURE_WIDTH, buildBvhAsync, type PackedBvh } from '../gl/bvh.js';
 import { perspective, lookAt, DEG2RAD } from '../gl/mat4.js';
+import { TONEMAP_GLSL, ToneMapper } from '../gl/tonemap.js';
 import { boolControl, floatControl, selectControl } from '../ui/controls.js';
 import { parseHdr } from '../io/hdr.js';
 import type { HdrImage } from '../io/hdr.js';
 import type { Store } from '../state/store.js';
 
 const FOV_Y = 45.0;
+/** Converged accumulation, in passes of `samples` Monte-Carlo samples per pixel. */
 export const MAX_ACCUM_FRAMES = 512;
+/**
+ * Ray mode traces a shadow ray per sample, so one frame takes at most
+ * RAY_SAMPLES_PER_FRAME samples per pixel at RAY_PIXEL_BUDGET pixels (fewer for
+ * larger targets) and a pass is split into several frames. This keeps each draw
+ * well under the GPU watchdog (Windows TDR, about 2 s); the converged sample
+ * count is unchanged.
+ */
+const RAY_SAMPLES_PER_FRAME = 16;
+const RAY_PIXEL_BUDGET = 512 * 512;
+/** Ray mode on screen: most accumulation frames drawn per displayed frame. */
+const RAY_MAX_STEPS_PER_DRAW = 16;
+/** Shadow-ray origin offset, relative to the mesh radius. */
+const RAY_EPSILON = 1e-4;
+
+/** Lit Object self-occlusion: none, baked SH, or ray traced against a BVH. */
+export type OcclusionMode = 'off' | 'sh' | 'ray';
+const OCCLUSION_MODES: readonly OcclusionMode[] = ['off', 'sh', 'ray'];
 
 interface RenderTarget {
   framebuffer: WebGLFramebuffer;
@@ -33,6 +54,8 @@ interface RenderTarget {
 export class LitObjectView extends BaseView {
   protected override readonly supportsBackgroundOverride = true;
   private cache: BrdfProgramCache;
+  private toneMapper = new ToneMapper(this.gl);
+  protected override readonly supportsHdr = true;
   private env: EnvTexture;
   private bg: { program: WebGLProgram; u: Uniforms } | null = null;
   private accum: { program: WebGLProgram; u: Uniforms };
@@ -41,7 +64,23 @@ export class LitObjectView extends BaseView {
   private normalVBO: WebGLBuffer;
   private uvVBO: WebGLBuffer;
   private tangentVBO: WebGLBuffer;
+  private occlusionVBO: WebGLBuffer;
+  /** Whether occlusionVBO holds a bake for the current mesh. */
+  private meshHasOcclusion = false;
   private meshHasUVs = false;
+  /** Current mesh, kept for building the BVH on demand. */
+  private meshData: IndexedMesh | null = null;
+  private meshRadius = 1;
+  /** Bumped by setMesh so a BVH finished for an older mesh is dropped. */
+  private meshGeneration = 0;
+  private bvhTextures: { nodes: WebGLTexture; tris: WebGLTexture } | null = null;
+  private bvhBuild: Promise<void> | null = null;
+  /** Camera drag in progress: Ray mode previews with SH until the drag ends. */
+  private interacting = false;
+  /** Ray mode: accumulation frames per displayed frame, adapted to the frame interval. */
+  private rayStepsPerDraw = 1;
+  private lastAccumDrawTime = 0;
+  private inSnapshot = false;
   private idxVBO: WebGLBuffer;
   private indexCount = 0;
   private emptyVAO: WebGLVertexArrayObject;
@@ -62,6 +101,7 @@ export class LitObjectView extends BaseView {
   private meshName = 'sphere';
   private hideBackground = false;
   private grayscaleIBL = false;
+  private occlusion: OcclusionMode = 'sh';
   private envName = '';
   private envSelectButton: HTMLButtonElement | null = null;
   private envSelectText: HTMLElement | null = null;
@@ -99,6 +139,7 @@ export class LitObjectView extends BaseView {
     this.normalVBO = gl.createBuffer()!;
     this.uvVBO = gl.createBuffer()!;
     this.tangentVBO = gl.createBuffer()!;
+    this.occlusionVBO = gl.createBuffer()!;
     this.idxVBO = gl.createBuffer()!;
     this.setMesh(buildSphere(1.0, 100, 100));
     this.emptyVAO = gl.createVertexArray()!;
@@ -146,6 +187,7 @@ export class LitObjectView extends BaseView {
       exposure: round6(this.exposure),
       hideBackground: this.hideBackground,
       grayIBL: this.grayscaleIBL,
+      occlusion: this.occlusion,
       camera: {
         theta: round6(this.lookTheta * RAD2DEG),
         phi: round6(this.lookPhi * RAD2DEG),
@@ -173,6 +215,7 @@ export class LitObjectView extends BaseView {
     this.exposure = num(s, 'exposure') ?? this.exposure;
     this.hideBackground = bool(s, 'hideBackground') ?? this.hideBackground;
     this.grayscaleIBL = bool(s, 'grayIBL') ?? this.grayscaleIBL;
+    this.occlusion = parseOcclusion(s.occlusion) ?? this.occlusion;
     const cam = obj(s, 'camera');
     const theta = num(cam, 'theta');
     const phi = num(cam, 'phi');
@@ -180,6 +223,7 @@ export class LitObjectView extends BaseView {
     if (phi !== undefined) this.lookPhi = phi * DEG2RAD_;
     this.lookZoom = Math.max(0.2, Math.min(5, num(cam, 'zoom') ?? this.lookZoom));
     await Promise.all(loads);
+    if (this.occlusion === 'ray') void this.ensureBvh();
     this.closeEnvironmentMenu();
     this.footer.replaceChildren();
     this.buildControls();
@@ -194,24 +238,82 @@ export class LitObjectView extends BaseView {
 
   protected override async prepareSnapshot(): Promise<void> {
     await this.pendingLoad;
+    if (this.occlusion === 'ray') await this.ensureBvh();
   }
 
   /**
    * IBL: restart accumulation and run exactly `frames` Monte-Carlo passes
    * (default: the converged count used on screen), so the image is repeatable.
+   * In Ray mode each pass is drawn as several smaller frames (same samples).
    */
   protected override renderSnapshot(options: { frames?: number }): void {
     if (!this.renderWithIBL) {
       this.renderFrame();
       return;
     }
-    const frames = Math.max(1, Math.min(MAX_ACCUM_FRAMES, Math.round(options.frames ?? MAX_ACCUM_FRAMES)));
+    this.interacting = false;
+    const passes = Math.max(1, Math.min(MAX_ACCUM_FRAMES, Math.round(options.frames ?? MAX_ACCUM_FRAMES)));
     this.accumFrame = 0;
     this.accumRead = 0;
     this.renderFrame(); // also (re)allocates the targets at the fixed size
     this.accumFrame = 0;
     this.accumRead = 0;
-    for (let i = 0; i < frames; i++) this.renderFrame();
+    const frames = passes * this.framesPerPass();
+    this.inSnapshot = true;
+    try {
+      for (let i = 0; i < frames; i++) {
+        this.renderFrame();
+        // submit as we go rather than queueing thousands of ray-traced draws
+        if (i % 16 === 15) this.gl.flush();
+      }
+    } finally {
+      this.inSnapshot = false;
+    }
+  }
+
+  /** Occlusion actually drawn this frame: 0 off, 1 SH, 2 ray (shader's occlusionMode). */
+  private effectiveOcclusion(): 0 | 1 | 2 {
+    // Ray falls back to SH while the BVH is being built and while the camera moves.
+    if (this.occlusion === 'ray' && this.bvhTextures && !this.interacting) return 2;
+    if (this.occlusion !== 'off' && this.meshHasOcclusion) return 1;
+    return 0;
+  }
+
+  /** Monte-Carlo samples per pixel drawn in one frame. */
+  private samplesPerFrame(): number {
+    if (this.effectiveOcclusion() !== 2) return this.numSamples;
+    const pixels = Math.max(1, this.canvas.width * this.canvas.height);
+    const budget = Math.floor((RAY_SAMPLES_PER_FRAME * RAY_PIXEL_BUDGET) / pixels);
+    return Math.max(1, Math.min(this.numSamples, RAY_SAMPLES_PER_FRAME, budget));
+  }
+
+  /** Frames that make up one pass of `numSamples` samples. */
+  private framesPerPass(): number {
+    return Math.ceil(this.numSamples / this.samplesPerFrame());
+  }
+
+  private maxAccumFrames(): number {
+    return MAX_ACCUM_FRAMES * this.framesPerPass();
+  }
+
+  /**
+   * Accumulation frames to draw before presenting. Ray frames are small, so on
+   * screen several are drawn per animation frame while the frame interval stays
+   * short (the browser slows animation frames down when the GPU falls behind).
+   */
+  private accumStepsThisDraw(): number {
+    if (this.inSnapshot || this.effectiveOcclusion() !== 2) {
+      this.lastAccumDrawTime = 0;
+      return 1;
+    }
+    const now = performance.now();
+    if (this.lastAccumDrawTime > 0 && this.accumFrame > 0) {
+      const interval = now - this.lastAccumDrawTime;
+      if (interval < 25) this.rayStepsPerDraw = Math.min(RAY_MAX_STEPS_PER_DRAW, this.rayStepsPerDraw + 1);
+      else if (interval > 50) this.rayStepsPerDraw = Math.max(1, this.rayStepsPerDraw >> 1);
+    }
+    this.lastAccumDrawTime = now;
+    return this.rayStepsPerDraw;
   }
 
   private camera() {
@@ -243,7 +345,6 @@ export class LitObjectView extends BaseView {
   }
 
   protected draw(): void {
-    const gl = this.gl;
     const w = this.canvas.width;
     const h = this.canvas.height;
     if (w === 0 || h === 0 || !this.bg) return;
@@ -263,12 +364,24 @@ export class LitObjectView extends BaseView {
 
     // Converged: re-present the accumulated image (applies current
     // gamma/exposure) without paying for another Monte-Carlo scene pass.
-    if (this.accumFrame >= MAX_ACCUM_FRAMES) {
+    const maxFrames = this.maxAccumFrames();
+    if (this.accumFrame >= maxFrames) {
       this.drawTextureToScreen(this.accumTargets[this.accumRead].texture, w, h);
       this.updateAccumStatus(this.accumFrame);
       return;
     }
 
+    const steps = this.accumStepsThisDraw();
+    for (let i = 0; i < steps && this.accumFrame < maxFrames; i++) this.accumulateFrame(cam, w, h, maxFrames);
+    this.drawTextureToScreen(this.accumTargets[this.accumRead].texture, w, h);
+    this.updateAccumStatus(this.accumFrame);
+    if (this.accumFrame < maxFrames) this.requestRender();
+  }
+
+  /** Draw one Monte-Carlo frame and fold it into the running average. */
+  private accumulateFrame(cam: ReturnType<LitObjectView['camera']>, w: number, h: number, maxFrames: number): void {
+    const gl = this.gl;
+    if (!this.sceneTarget || !this.accumTargets) return;
     this.drawScene(cam, this.sceneTarget.framebuffer, w, h);
 
     const write = this.accumRead === 0 ? 1 : 0;
@@ -290,10 +403,7 @@ export class LitObjectView extends BaseView {
     gl.depthMask(true);
 
     this.accumRead = write;
-    this.accumFrame = Math.min(this.accumFrame + 1, MAX_ACCUM_FRAMES);
-    this.drawTextureToScreen(this.accumTargets[this.accumRead].texture, w, h);
-    this.updateAccumStatus(this.accumFrame);
-    if (this.accumFrame < MAX_ACCUM_FRAMES) this.requestRender();
+    this.accumFrame = Math.min(this.accumFrame + 1, maxFrames);
   }
 
   private drawScene(cam: ReturnType<LitObjectView['camera']>, framebuffer: WebGLFramebuffer | null, w: number, h: number): void {
@@ -349,8 +459,21 @@ export class LitObjectView extends BaseView {
     prog.u.f('renderWithIBL', this.renderWithIBL ? 1 : 0);
     prog.u.f('envIntensity', 1.0);
     prog.u.f('grayscaleIBL', this.grayscaleIBL ? 1 : 0);
-    prog.u.i('numSamples', this.numSamples);
+    const occlusionMode = this.renderWithIBL ? this.effectiveOcclusion() : 0;
+    prog.u.i('occlusionMode', occlusionMode);
+    prog.u.f('rayEpsilon', RAY_EPSILON * this.meshRadius);
+    // Ray mode: numSamples is the per-frame count and frameIndex counts those
+    // frames, so the shader walks the same sample sequence as a full pass.
+    prog.u.i('numSamples', this.samplesPerFrame());
     prog.u.i('frameIndex', this.accumFrame);
+    prog.u.i('bvhNodes', BVH_NODE_UNIT);
+    prog.u.i('bvhTris', BVH_TRI_UNIT);
+    if (occlusionMode === 2 && this.bvhTextures) {
+      gl.activeTexture(gl.TEXTURE0 + BVH_NODE_UNIT);
+      gl.bindTexture(gl.TEXTURE_2D, this.bvhTextures.nodes);
+      gl.activeTexture(gl.TEXTURE0 + BVH_TRI_UNIT);
+      gl.bindTexture(gl.TEXTURE_2D, this.bvhTextures.tris);
+    }
     // env on unit 1 (unit 0 may be used by measured BRDF data)
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.env.texture);
@@ -394,6 +517,18 @@ export class LitObjectView extends BaseView {
       gl.enableVertexAttribArray(tangentLoc);
       gl.vertexAttribPointer(tangentLoc, 4, gl.FLOAT, false, 0, 0);
     }
+    for (let i = 0; i < OCCLUSION_SH_COEFFS / 4; i++) {
+      const occLoc = gl.getAttribLocation(prog.program, `vtx_occ${i}`);
+      if (occLoc < 0) continue;
+      if (this.meshHasOcclusion) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.occlusionVBO);
+        gl.enableVertexAttribArray(occLoc);
+        gl.vertexAttribPointer(occLoc, 4, gl.FLOAT, false, OCCLUSION_SH_COEFFS * 4, i * 16);
+      } else {
+        gl.disableVertexAttribArray(occLoc);
+        gl.vertexAttrib4f(occLoc, 0, 0, 0, 0);
+      }
+    }
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.idxVBO);
     gl.drawElements(gl.TRIANGLES, this.indexCount, gl.UNSIGNED_INT, 0);
   }
@@ -407,10 +542,12 @@ export class LitObjectView extends BaseView {
       this.disposeTarget(this.accumTargets[0]);
       this.disposeTarget(this.accumTargets[1]);
     }
-    this.sceneTarget = createRenderTarget(this.gl, w, h, this.floatRenderTargets, true);
+    this.sceneTarget = createRenderTarget(this.gl, w, h, this.floatRenderTargets ? 'half' : 'byte', true);
+    // 32-bit float running average: Ray mode accumulates thousands of frames,
+    // where a half-float average would stop picking up new samples.
     this.accumTargets = [
-      createRenderTarget(this.gl, w, h, this.floatRenderTargets, false),
-      createRenderTarget(this.gl, w, h, this.floatRenderTargets, false),
+      createRenderTarget(this.gl, w, h, this.floatRenderTargets ? 'float' : 'byte', false),
+      createRenderTarget(this.gl, w, h, this.floatRenderTargets ? 'float' : 'byte', false),
     ];
     this.resetAccumulation();
   }
@@ -427,6 +564,7 @@ export class LitObjectView extends BaseView {
     this.display.u.i('sourceTex', 0);
     this.display.u.f('gamma', this.gamma);
     this.display.u.f('exposure', this.exposure);
+    this.toneMapper.apply(this.display.u, this.displayMode());
     gl.bindVertexArray(this.emptyVAO);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
@@ -478,6 +616,14 @@ export class LitObjectView extends BaseView {
 
   private setMesh(mesh: IndexedMesh): void {
     const gl = this.gl;
+    this.meshData = mesh;
+    this.meshGeneration++;
+    this.deleteBvh();
+    let radius = 0;
+    for (let i = 0; i < mesh.positions.length; i += 3) {
+      radius = Math.max(radius, Math.hypot(mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]));
+    }
+    this.meshRadius = radius || 1;
     this.indexCount = mesh.indices.length;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posVBO);
     gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STATIC_DRAW);
@@ -491,6 +637,77 @@ export class LitObjectView extends BaseView {
     gl.bufferData(gl.ARRAY_BUFFER, computeTangents(mesh) ?? new Float32Array((mesh.positions.length / 3) * 4), gl.STATIC_DRAW);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.idxVBO);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
+
+    const t0 = performance.now();
+    const occlusion = bakeOcclusionSH(gl, {
+      positions: mesh.positions,
+      normals: mesh.normals ?? mesh.positions,
+      posVBO: this.posVBO,
+      idxVBO: this.idxVBO,
+      indexCount: this.indexCount,
+    });
+    this.meshHasOcclusion = !!occlusion;
+    if (occlusion) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.occlusionVBO);
+      gl.bufferData(gl.ARRAY_BUFFER, occlusion, gl.STATIC_DRAW);
+      console.info(`[brdfView] Lit Object: occlusion baked for ${mesh.positions.length / 3} vertices in ${(performance.now() - t0).toFixed(0)} ms`);
+    } else {
+      console.warn('[brdfView] Lit Object: occlusion bake unavailable; rendering without self-occlusion');
+    }
+    if (this.occlusion === 'ray') void this.ensureBvh();
+  }
+
+  /**
+   * Build (in a worker) and upload the current mesh's BVH for Ray mode, once per
+   * mesh. Until it is ready, Ray mode draws with SH; when it arrives the
+   * accumulation restarts.
+   */
+  private ensureBvh(): Promise<void> {
+    if (this.bvhBuild) return this.bvhBuild;
+    const mesh = this.meshData;
+    if (!mesh) return Promise.resolve();
+    const generation = this.meshGeneration;
+    const t0 = performance.now();
+    this.bvhBuild = buildBvhAsync(mesh.positions, mesh.indices, mesh.normals)
+      .then((bvh) => {
+        if (generation !== this.meshGeneration || !bvh) return;
+        this.uploadBvh(bvh);
+        console.info(
+          `[brdfView] Lit Object: BVH for ${bvh.triCount} triangles (${bvh.nodeCount} nodes, depth ${bvh.depth}) in ${(performance.now() - t0).toFixed(0)} ms`,
+        );
+        if (this.occlusion === 'ray') this.resetAccumulation();
+      })
+      .catch((e) => console.error('[brdfView] Lit Object: BVH build failed; Ray occlusion falls back to SH', e));
+    return this.bvhBuild;
+  }
+
+  private uploadBvh(bvh: PackedBvh): void {
+    const gl = this.gl;
+    const maxSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+    if (bvh.nodeRows > maxSize || bvh.triRows > maxSize) {
+      console.warn('[brdfView] Lit Object: mesh too large for the BVH textures; Ray occlusion falls back to SH');
+      return;
+    }
+    const upload = (data: Float32Array, rows: number): WebGLTexture => {
+      const t = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, BVH_TEXTURE_WIDTH, rows, 0, gl.RGBA, gl.FLOAT, data);
+      return t;
+    };
+    this.bvhTextures = { nodes: upload(bvh.nodes, bvh.nodeRows), tris: upload(bvh.tris, bvh.triRows) };
+  }
+
+  private deleteBvh(): void {
+    if (this.bvhTextures) {
+      this.gl.deleteTexture(this.bvhTextures.nodes);
+      this.gl.deleteTexture(this.bvhTextures.tris);
+    }
+    this.bvhTextures = null;
+    this.bvhBuild = null;
   }
 
   private loadEnvironment(name: string): Promise<void> {
@@ -572,6 +789,22 @@ export class LitObjectView extends BaseView {
         this.resetAccumulation();
       }),
     );
+    const occlusionSelect = selectControl(
+      'Occlusion',
+      [
+        { value: 'off', text: 'Off' },
+        { value: 'sh', text: 'SH' },
+        { value: 'ray', text: 'Ray' },
+      ],
+      this.occlusion,
+      (v) => {
+        this.occlusion = parseOcclusion(v) ?? this.occlusion;
+        if (this.occlusion === 'ray') void this.ensureBvh();
+        this.resetAccumulation();
+      },
+      'IBL のみ: メッシュ自身による遮蔽。SH = 読み込み時に頂点ごとに事前計算した近似、Ray = サンプルごとに影のレイを飛ばす正確な判定（収束に時間がかかる）/ ' +
+        'IBL only: self-occlusion from the mesh. SH = approximation baked per vertex at load, Ray = exact shadow ray per sample (slower to converge).',
+    );
 
     this.footer.append(
       this.buildEnvironmentSelect(),
@@ -585,6 +818,7 @@ export class LitObjectView extends BaseView {
         (v) => void this.loadObject(v),
       ),
       iblChecks,
+      occlusionSelect,
       floatControl('Gamma', this.gamma, 0.1, 5, 2.2, (v) => {
         this.gamma = v;
         this.requestRender();
@@ -594,6 +828,7 @@ export class LitObjectView extends BaseView {
         this.requestRender();
       }),
     );
+    this.syncToneMapControls();
   }
 
   private buildEnvironmentSelect(): HTMLElement {
@@ -790,6 +1025,11 @@ export class LitObjectView extends BaseView {
     c.addEventListener('pointerup', (e) => {
       button = -1;
       c.releasePointerCapture(e.pointerId);
+      if (this.interacting) {
+        this.interacting = false;
+        // Ray mode previewed with SH during the drag: restart with rays.
+        if (this.occlusion === 'ray') this.resetAccumulation();
+      }
     });
     c.addEventListener('pointermove', (e) => {
       if (button < 0) return;
@@ -797,6 +1037,7 @@ export class LitObjectView extends BaseView {
       const dy = e.clientY - lastY;
       lastX = e.clientX;
       lastY = e.clientY;
+      this.interacting = true;
       if (button === 0) {
         this.lookPhi += dx * 0.01;
         this.lookTheta += -dy * 0.01;
@@ -817,6 +1058,15 @@ export class LitObjectView extends BaseView {
   }
 }
 
+/** "off" / "sh" / "ray"; older states store a boolean (true = SH, false = off). */
+function parseOcclusion(v: unknown): OcclusionMode | undefined {
+  if (typeof v === 'string' && (OCCLUSION_MODES as readonly string[]).includes(v.toLowerCase())) {
+    return v.toLowerCase() as OcclusionMode;
+  }
+  const b = bool({ v }, 'v');
+  return b === undefined ? undefined : b ? 'sh' : 'off';
+}
+
 type V3 = [number, number, number];
 function norm(v: V3): V3 {
   const l = Math.hypot(v[0], v[1], v[2]) || 1;
@@ -833,7 +1083,7 @@ function createRenderTarget(
   gl: WebGL2RenderingContext,
   width: number,
   height: number,
-  useFloat: boolean,
+  format: 'byte' | 'half' | 'float',
   withDepth: boolean,
 ): RenderTarget {
   const texture = gl.createTexture();
@@ -845,17 +1095,9 @@ function createRenderTarget(
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texImage2D(
-    gl.TEXTURE_2D,
-    0,
-    useFloat ? gl.RGBA16F : gl.RGBA8,
-    width,
-    height,
-    0,
-    gl.RGBA,
-    useFloat ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE,
-    null,
-  );
+  const [internalFormat, type] =
+    format === 'float' ? [gl.RGBA32F, gl.FLOAT] : format === 'half' ? [gl.RGBA16F, gl.HALF_FLOAT] : [gl.RGBA8, gl.UNSIGNED_BYTE];
+  gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, gl.RGBA, type, null);
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
@@ -911,6 +1153,7 @@ void main() {
 
 const DISPLAY_FRAG = `#version 300 es
 precision highp float;
+${TONEMAP_GLSL}
 uniform sampler2D sourceTex;
 uniform float gamma;
 uniform float exposure;
@@ -920,8 +1163,7 @@ void main() {
   vec4 src = texture(sourceTex, vUv);
   vec3 c = max(src.rgb, vec3(0.0));
   c *= pow(2.0, exposure);
-  c = pow(c, vec3(1.0 / gamma));
   // alpha is 1 except in snapshots with a transparent / solid background
-  fragColor = vec4(clamp(c, 0.0, 1.0), clamp(src.a, 0.0, 1.0));
+  fragColor = vec4(displayLimit(displayEncode(c, gamma)), clamp(src.a, 0.0, 1.0));
 }
 `;

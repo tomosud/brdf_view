@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HDR Probe</title>
+<!--
+  開発用: WebGL2 / WebGPU のキャンバスで HDR（1.0 を超える明るさ）を出せるかを調べるページ。
+  npm run dev で http://localhost:5173/tools/hdr-probe.html を開く。本番ビルドには入らない。
+  Dev-only probe for HDR canvas output (WebGL2 float drawing buffer, WebGPU extended tone mapping).
+-->
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 16px; font: 13px/1.5 system-ui, sans-serif; background: #202020; color: #ddd; }
+  h1 { font-size: 16px; margin: 0 0 8px; }
+  h2 { font-size: 14px; margin: 18px 0 6px; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  figure { margin: 0; }
+  figcaption { font-size: 12px; color: #aaa; max-width: 520px; }
+  canvas { display: block; width: 520px; height: 90px; background: #000; }
+  .labels { display: flex; width: 520px; font-size: 11px; color: #aaa; }
+  .labels span { flex: 1; text-align: center; }
+  pre { background: #111; padding: 8px; max-width: 1100px; overflow: auto; font-size: 12px; }
+  button { font: inherit; padding: 4px 10px; }
+  .ok { color: #8f8; } .ng { color: #f88; }
+</style>
+</head>
+<body>
+<h1>HDR Probe（WebGL2 / WebGPU の HDR キャンバス出力の確認）</h1>
+<p>
+  各段のパッチは左から、リニアの明るさ <b>0.5, 1, 2, 4, 8, 16</b>（1 = SDR の白）。
+  HDR 出力が効いていれば、<b>1 より右のパッチが 1 より明るく見え、段階が分かれる</b>。
+  効いていなければ 1 から右は同じ白になる。Windows の「HDR を使用する」をオンにし、HDR モニターにウィンドウを置いて見ること。
+</p>
+
+<h2>結果（機能の有無）</h2>
+<pre id="report">調べています…</pre>
+<button id="copy">結果をコピー</button>
+
+<h2>見た目の確認</h2>
+<div class="row" id="tests"></div>
+
+<script type="module">
+const VALUES = [0.5, 1, 2, 4, 8, 16];
+const report = {};
+const log = (k, v) => { report[k] = v; document.getElementById('report').textContent = JSON.stringify(report, null, 2); };
+
+log('userAgent', navigator.userAgent);
+log('matchMedia', {
+  'dynamic-range: high': matchMedia('(dynamic-range: high)').matches,
+  'video-dynamic-range: high': matchMedia('(video-dynamic-range: high)').matches,
+  'color-gamut: p3': matchMedia('(color-gamut: p3)').matches,
+  'color-gamut: rec2020': matchMedia('(color-gamut: rec2020)').matches,
+});
+log('screen', { colorDepth: screen.colorDepth, devicePixelRatio });
+
+// sRGB transfer, mirrored and extended above 1 (extended sRGB encoding)
+const enc = (x) => Math.sign(x) * (Math.abs(x) <= 0.0031308 ? Math.abs(x) * 12.92 : 1.055 * Math.pow(Math.abs(x), 1 / 2.4) - 0.055);
+
+function addTest(title, note) {
+  const fig = document.createElement('figure');
+  const canvas = document.createElement('canvas');
+  canvas.width = 520 * devicePixelRatio;
+  canvas.height = 90 * devicePixelRatio;
+  const labels = document.createElement('div');
+  labels.className = 'labels';
+  labels.innerHTML = VALUES.map((v) => `<span>${v}</span>`).join('');
+  const cap = document.createElement('figcaption');
+  cap.innerHTML = `<b>${title}</b><br>${note}`;
+  fig.append(canvas, labels, cap);
+  document.getElementById('tests').append(fig);
+  return { canvas, cap };
+}
+
+// ---------------- WebGL2 ----------------
+const VS = `#version 300 es
+void main() { vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }`;
+const FS = `#version 300 es
+precision highp float;
+uniform float values[${VALUES.length}];
+uniform float width;
+uniform int encode; // 1: write extended-sRGB encoded values, 0: write linear
+out vec4 o;
+float enc(float x) { return x <= 0.0031308 ? x * 12.92 : 1.055 * pow(x, 1.0 / 2.4) - 0.055; }
+void main() {
+  int i = int(gl_FragCoord.x / width * ${VALUES.length}.0);
+  float v = values[i];
+  o = vec4(vec3(encode == 1 ? enc(v) : v), 1.0);
+}`;
+
+function webglTest(title, setup) {
+  const { canvas, cap } = addTest(title, '');
+  const gl = canvas.getContext('webgl2', setup.contextOptions ?? {});
+  const info = {};
+  if (!gl) { cap.innerHTML += '<span class="ng">WebGL2 なし</span>'; return info; }
+  try { setup.configure?.(gl, canvas, info); } catch (e) { info.configureError = String(e); }
+  const sh = (t, s) => { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); return x; };
+  const p = gl.createProgram();
+  gl.attachShader(p, sh(gl.VERTEX_SHADER, VS));
+  gl.attachShader(p, sh(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(p);
+  gl.useProgram(p);
+  gl.uniform1fv(gl.getUniformLocation(p, 'values'), VALUES);
+  gl.uniform1f(gl.getUniformLocation(p, 'width'), canvas.width);
+  gl.uniform1i(gl.getUniformLocation(p, 'encode'), setup.encode ? 1 : 0);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.bindVertexArray(gl.createVertexArray());
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  info.drawingBufferFormat = gl.drawingBufferFormat !== undefined ? '0x' + gl.drawingBufferFormat.toString(16) : 'n/a';
+  info.drawingBufferColorSpace = gl.drawingBufferColorSpace ?? 'n/a';
+  info.unpackColorSpace = gl.unpackColorSpace ?? 'n/a';
+  // read back the drawing buffer to confirm values above 1 survive
+  try {
+    const isFloat = gl.drawingBufferFormat === gl.RGBA16F;
+    const px = isFloat ? new Float32Array(4) : new Uint8Array(4);
+    gl.readPixels(Math.floor(canvas.width * (VALUES.length - 0.5) / VALUES.length), 10, 1, 1, gl.RGBA, isFloat ? gl.FLOAT : gl.UNSIGNED_BYTE, px);
+    info.readbackOfBrightestPatch = Array.from(px).slice(0, 3);
+  } catch (e) { info.readbackError = String(e); }
+  cap.innerHTML += `<pre>${JSON.stringify(info, null, 1)}</pre>`;
+  log('test ' + title, info);
+  return info;
+}
+
+const gl0 = document.createElement('canvas').getContext('webgl2');
+log('webgl2', {
+  drawingBufferStorage: typeof gl0?.drawingBufferStorage === 'function',
+  drawingBufferColorSpace: gl0 && 'drawingBufferColorSpace' in gl0,
+  drawingBufferToneMapping: typeof gl0?.drawingBufferToneMapping === 'function',
+  'canvas.configureHighDynamicRange': typeof HTMLCanvasElement.prototype.configureHighDynamicRange === 'function',
+  EXT_color_buffer_half_float: !!gl0?.getExtension('EXT_color_buffer_half_float'),
+  EXT_color_buffer_float: !!gl0?.getExtension('EXT_color_buffer_float'),
+});
+
+webglTest('A. WebGL2 標準（RGBA8）', { encode: true });
+
+const B = webglTest('B. WebGL2 + drawingBufferStorage(RGBA16F)', {
+  encode: true,
+  configure(gl, canvas, info) {
+    gl.getExtension('EXT_color_buffer_half_float');
+    gl.drawingBufferStorage(gl.RGBA16F, canvas.width, canvas.height);
+    info.storage = 'RGBA16F';
+  },
+});
+
+webglTest('C. WebGL2 + RGBA16F + 拡張範囲のトーンマップ指定（使える API を全部試す）', {
+  encode: true,
+  configure(gl, canvas, info) {
+    gl.getExtension('EXT_color_buffer_half_float');
+    gl.drawingBufferStorage(gl.RGBA16F, canvas.width, canvas.height);
+    const tried = [];
+    if (typeof gl.drawingBufferToneMapping === 'function') {
+      try { gl.drawingBufferToneMapping({ mode: 'extended' }); tried.push('gl.drawingBufferToneMapping({mode:"extended"}): ok'); }
+      catch (e) { tried.push('gl.drawingBufferToneMapping: ' + e); }
+    }
+    if (typeof canvas.configureHighDynamicRange === 'function') {
+      try { canvas.configureHighDynamicRange({ mode: 'extended' }); tried.push('canvas.configureHighDynamicRange({mode:"extended"}): ok'); }
+      catch (e) { tried.push('canvas.configureHighDynamicRange: ' + e); }
+    }
+    try { canvas.style.dynamicRangeLimit = 'no-limit'; tried.push('style.dynamicRangeLimit=' + (canvas.style.dynamicRangeLimit || '(unsupported)')); }
+    catch (e) { tried.push('dynamicRangeLimit: ' + e); }
+    info.tried = tried;
+  },
+});
+
+webglTest('D. WebGL2 + RGBA16F + srgb-linear（リニア値を書く）', {
+  encode: false,
+  configure(gl, canvas, info) {
+    gl.getExtension('EXT_color_buffer_half_float');
+    gl.drawingBufferStorage(gl.RGBA16F, canvas.width, canvas.height);
+    try { gl.drawingBufferColorSpace = 'srgb-linear'; } catch (e) { info.colorSpaceError = String(e); }
+    if (typeof gl.drawingBufferToneMapping === 'function') {
+      try { gl.drawingBufferToneMapping({ mode: 'extended' }); info.toneMapping = 'extended'; } catch (e) { info.toneMappingError = String(e); }
+    }
+    if (typeof canvas.configureHighDynamicRange === 'function') {
+      try { canvas.configureHighDynamicRange({ mode: 'extended' }); info.hdr = 'extended'; } catch (e) { info.hdrError = String(e); }
+    }
+  },
+});
+
+// ---------------- WebGPU ----------------
+async function webgpuTest() {
+  const { canvas, cap } = addTest('E. WebGPU rgba16float + toneMapping extended（計画 (a) の方式）', '');
+  const info = {};
+  try {
+    if (!navigator.gpu) throw new Error('navigator.gpu なし');
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) throw new Error('adapter なし');
+    info.adapter = adapter.info ? `${adapter.info.vendor} ${adapter.info.architecture} ${adapter.info.description}` : '?';
+    const device = await adapter.requestDevice();
+    const ctx = canvas.getContext('webgpu');
+    ctx.configure({ device, format: 'rgba16float', colorSpace: 'srgb', toneMapping: { mode: 'extended' }, alphaMode: 'opaque' });
+    const conf = ctx.getConfiguration?.();
+    info.configuredToneMapping = conf?.toneMapping?.mode ?? '(getConfiguration なし / 無視された)';
+    const module = device.createShaderModule({ code: `
+      @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+        let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u));
+        return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+      }
+      fn enc(x: f32) -> f32 { return select(1.055 * pow(x, 1.0 / 2.4) - 0.055, x * 12.92, x <= 0.0031308); }
+      @group(0) @binding(0) var<uniform> u: array<vec4f, 2>;
+      @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+        let i = u32(pos.x / u[1].z * 6.0);
+        var v = 0.0;
+        switch i { case 0u: { v = u[0].x; } case 1u: { v = u[0].y; } case 2u: { v = u[0].z; }
+                   case 3u: { v = u[0].w; } case 4u: { v = u[1].x; } default: { v = u[1].y; } }
+        return vec4f(vec3f(enc(v)), 1.0);
+      }` });
+    const pipeline = device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vs' },
+      fragment: { module, entryPoint: 'fs', targets: [{ format: 'rgba16float' }] } });
+    const buf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(buf, 0, new Float32Array([...VALUES, canvas.width, 0]));
+    const bind = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: buf } }] });
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+    pass.setPipeline(pipeline); pass.setBindGroup(0, bind); pass.draw(3); pass.end();
+    device.queue.submit([enc.finish()]);
+    info.ok = true;
+  } catch (e) { info.error = String(e); }
+  cap.innerHTML += `<pre>${JSON.stringify(info, null, 1)}</pre>`;
+  log('webgpu', info);
+}
+await webgpuTest();
+
+document.getElementById('copy').onclick = () => navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+window.hdrProbeReport = report;
+</script>
+</body>
+</html>

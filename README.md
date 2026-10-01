@@ -37,6 +37,10 @@ https://rgl.epfl.ch/materials
 - `Lit Object`: HDRI 環境光で球・ティーポット・頭部モデル（`dm`）などを照らして確認します。
 - `Lit Sphere`: 元 BRDF Explorer に近い球表示で確認します。
 
+ツールバーの `Tone map (ACES 2.0)`（既定オフ）をオンにすると、`Lit Object`・`Lit Sphere`・`Image Slice` の表示に ACES 2.0 の Output Transform（SDR 100 nits、Rec.709、sRGB の符号化）をかけます。明るいところが白く飛ばずになだらかに丸まり、彩度の高い色も表示範囲に収めます。描画結果はリニアの Rec.709 として ACES に渡します。`Exposure` はトーンマップの前にかかり、オンの間は `Gamma` を使いません（灰色で無効になります）。OpenColorIO の ACES studio config（「sRGB - Display」/「ACES 2.0 - SDR 100 nits (Rec.709)」、入力「Linear Rec.709 (sRGB)」）と、8 bit で 1/255 未満の差で一致することを確かめています。オフのときの表示は今までと同じです。
+
+ツールバーの `HDR`（既定オフ）をオンにすると、同じ 3 つのビューを HDR で表示します（Chrome 系のブラウザ、Windows の「HDR を使用する」がオンの HDR モニター）。画面の 1.0 を SDR の白（203 nits、ITU-R BT.2408）として、それより明るい値をそのまま出します。`Tone map` もオンなら ACES 2.0 の HDR 版（1000 nits、P3-D65。OpenColorIO の「Display P3 HDR - Display」/「ACES 2.0 - HDR 1000 nits (P3 D65)」と同じ計算で、1.0 を 203 nits に合わせたもの）、オフなら今の表示から 1 での切り捨てを外しただけのものになります。HDR 表示でないモニターに移すと自動で SDR に戻ります。撮影（PNG、`render()`、`capture.bat`）は常に SDR です。
+
 `ALBEDO` view は廃止しました。Monte Carlo 積分を含む巨大 shader が通常
 `.brdf` の初回 compile を重くしていたため、現在の Cartesian plot は
 `Theta V / Theta H / Theta D` のみです。
@@ -66,6 +70,9 @@ capture.bat --batch jobs.json
 
 - 操作部品には `data-testid`（例 `param-roughness`、`view-litObject`、`ctl-exposure`）と `aria-label` を付けています。
 - Lit Object に `IBL` のチェックを追加しました。外すと HDRI の代わりに、Incident θ/φ からの平行光 1 つで照らします。
+- Lit Object の `Occlusion` は、モデル自身による環境光の遮蔽を IBL に反映します（鼻の穴、眼窩、耳の内側、顎の下など）。`Off` / `SH` / `Ray` から選びます（既定 `SH`）。どれも遮る光を減らすだけで相互反射は含まず、平行光（IBL オフ）には効きません。凸形状（球）の見た目はどれでも変わりません。
+  - `SH`: モデルの読み込み時に、頂点ごとに方向別の遮蔽を球面調和関数（l ≤ 3、16 係数）として GPU で事前計算します。軽いですが低次の近似なので、くっきりした影は出ません。
+  - `Ray`: サンプルごとにモデルへ影のレイを飛ばして正確に判定します（初めて選んだときに、BVH をバックグラウンドで作ります。25 万頂点で約 1 秒）。接するところの影もくっきり出ますが重く、GPU のタイムアウトを避けるため 1 フレームのサンプル数を減らして描くので、収束まで数十秒かかります。カメラを動かしている間は `SH` で描き、離すと `Ray` で積算し直します。モデルは閉じていて法線が外を向いている前提で、レイが裏側から当たる面は遮蔽として数えません。
 - AI エージェント用の手順は [.claude/skills/brdf-view/SKILL.md](.claude/skills/brdf-view/SKILL.md) にあります。
 
 ## テクスチャとノーマルマップ
@@ -198,3 +205,9 @@ https://github.com/wdas/brdf
 Original Disney BRDF Explorer files carry Disney Enterprises copyright and
 license notices. Redistributed files should keep the bundled license and
 attribution files.
+
+The ACES 2.0 tone mapping (`web/src/gl/aces2.ts`, `web/src/gl/tonemap.ts`) is a
+port of the ACES Output Transform from
+[aces-aswf/aces-core](https://github.com/aces-aswf/aces-core)
+(Copyright Contributors to the ACES Project, Apache-2.0). See
+`web/public/licenses/ACES-LICENSE.txt`.
