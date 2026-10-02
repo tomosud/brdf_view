@@ -80,13 +80,32 @@ Last updated: 2026-10-01
 
 | ファイル | 元のプロファイル | 備考 |
 |---|---|---|
-| `callisto_skin_jacob.brdf` | `SP_Jacob_Head` | `callisto_brdf.brdf` の初期値と同じ |
-| `callisto_skin_generic.brdf` | `SSP_HumanSkin` | NPC 用の汎用肌 |
 | `callisto_eye.brdf` | `SP_*_Eye_Main` | Callisto 項のみ。虹彩法線・角膜（Eye モデル）は含まない |
 | `callisto_teeth.brdf` | `SP_Jacob_Teeth` | Roughness0/1・LobeMix は SSP テクスチャの値（0.75 / 2.0 / 0.7） |
 | `callisto_cloth_prisoner.brdf` | `SP_Player_Jacob_Cloth` | 囚人服 |
 
 `base_color` / `specular` / `roughness` はゲームではテクスチャから来るので、プリセットでは代表値です。
+肌の派生ファイル（Jacob の顔、汎用肌）は 2026-10-02 に削除しました。Jacob の顔は `callisto_brdf.brdf` の初期値と同じで、汎用肌の値は上の表のとおり `callisto_brdf.brdf` のパラメータで再現できます。
+
+## 肌トーン版（skintone_callisto_brdf.brdf）
+
+独自の派生ファイルです。ライティング（BRDF と疑似 SSS / Glazing のフック）は `callisto_brdf.brdf` と同じで、
+`BRDF_sss_albedo()` だけを次の式に置き換えています（UE のマテリアルグラフに合わせたもの）。初期値は `roughness1_scale` を 1.1 にした以外は同じです。
+
+```
+tone   = SKIN_CHART[floor(skintone + 0.1) - 1]          // チャートの列の中心、V = 0.5。デコードしない
+skin   = pow(saturate(ldr_mask - 0.5 + tone), 2.2)      // ガンマ 2.2 で近似的にリニアへ（sRGB の正確な式ではない）
+albedo = saturate(lerp(skin, sRGB_decode(base_color), hair_mask))
+```
+
+- チャート（横 110 列）はテクスチャとしては持たず、各列をバイリニア・ミップなし・Wrap でサンプルした値を
+  `SKIN_CHART` に埋め込んでいます。`python scripts/gen_skintone_callisto.py --chart <チャート PNG>` で作り直せます
+  （`--chart` なしなら、今の値のまま `callisto_brdf.brdf` の変更だけを反映）
+- `ldr_mask` はガンマ空間の値をそのまま使うので、貼る画像は sRGB 扱い（変換なし）。`hair_mask` は R チャンネル
+- Lit Object の `dm` では `T_emily_BC`（`base_color`）、`Test_face_system_LDR_MASK`（`ldr_mask`）、
+  `Test_face_system_HairMask`（`hair_mask`）が既定で貼られます。マスクは可逆 WebP
+- 検証: `python scripts/verify_skintone_brdf.py --chart <チャート PNG>`。albedo を Python の参照と比べ（最大誤差 6.5e-7）、
+  `hair_mask = 1` のライティングが `callisto_brdf.brdf` と一致すること（最大相対誤差 9.0e-8）を確認（2026-10-02）
 
 ## 確認済みの点
 

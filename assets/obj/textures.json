@@ -12,6 +12,17 @@
         "file": "T_emily_MRAO.webp",
         "channel": "g",
         "colorSpace": "linear"
+      },
+      {
+        "names": ["ldr_mask"],
+        "file": "Test_face_system_LDR_MASK.webp",
+        "colorSpace": "srgb"
+      },
+      {
+        "names": ["hair_mask"],
+        "file": "Test_face_system_HairMask.webp",
+        "channel": "r",
+        "colorSpace": "linear"
       }
     ]
   }

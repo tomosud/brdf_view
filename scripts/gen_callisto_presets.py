@@ -19,20 +19,8 @@ BASE = os.path.join(ROOT, "sample", "brdf", "callisto_brdf.brdf")
 
 # name -> (description, shipped profile, {param: value(s)})
 # base_color / specular / roughness come from textures in the game; values here are representative only.
+# Skin has no preset file: the Jacob head profile is the default of callisto_brdf.brdf itself.
 PRESETS = {
-    "callisto_skin_jacob": ("Jacob head skin", "SP_Jacob_Head", {}),
-    "callisto_skin_generic": ("generic human skin (NPC)", "SSP_HumanSkin", {
-        "roughness0_scale": 0.44, "roughness1_scale": 1.0, "lobe_mix": 0.95,
-        "dual_spec_tint_r": 0.464, "dual_spec_tint_g": 1.0, "dual_spec_tint_b": 0.91,
-        "spec_fresnel_falloff": 0.55, "spec_smooth_terminator": 0.3,
-        "spec_term_tint_r": 1.0, "spec_term_tint_g": 1.0, "spec_term_tint_b": 1.0,
-        "diffuse_smooth_terminator": 0.15, "diffuse_fresnel_peak": 1.0,
-        "anti_spec_peak_r": 0.0, "anti_spec_peak_g": 1.0, "anti_spec_peak_b": 0.5,
-        "anti_spec_peak_falloff": 0.125,
-        "glazing_blur_radius": 0.15,
-        "sss_scatter_radius": 0.6, "sss_falloff_r": 1.0, "sss_falloff_g": 0.25, "sss_falloff_b": 0.05,
-        "sss_subsurface_r": 1.0, "sss_subsurface_g": 1.0, "sss_subsurface_b": 1.0,
-    }),
     "callisto_eye": ("eye (sclera/iris diffuse + dual specular; no Eye shading model)", "SP_*_Eye_Main", {
         "base_color": (0.85, 0.82, 0.78), "roughness": 0.3,
         "roughness0_scale": 1.1, "roughness1_scale": 2.0, "lobe_mix": 0.175,

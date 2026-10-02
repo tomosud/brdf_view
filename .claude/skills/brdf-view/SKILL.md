@@ -54,7 +54,7 @@ UI をクリックで操作するより、上のどれかを使う。UI を触�
 
 ```js
 await brdfView.ready;
-await brdfView.setState({ brdfs: [{ file: 'callisto_skin_jacob.brdf' }], light: { theta: 90, phi: 0 } });
+await brdfView.setState({ brdfs: [{ file: 'callisto_brdf.brdf' }], light: { theta: 90, phi: 0 } });
 brdfView.setParam('roughness', 0.3);
 const png = await brdfView.render('litObject', { width: 768, height: 768 });   // data:image/png;base64,...
 const rgb = await brdfView.evaluate({ thetaL: 60, phiL: 0, thetaV: 30, phiV: 180 }); // [r, g, b]

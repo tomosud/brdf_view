@@ -49,7 +49,7 @@ BRDF Explorer Web を、人の手を介さずに操作するための入口は 3
 | `litObject.envRotation` | IBL の環境を縦軸（y）まわりに回す角度（度、UI の「Env rot」、`ctl-env-rot`、既定 0）。背景と照明の両方が回る。正の値で、正面カメラ（`camera = { theta: 90, phi: 90 }`）から見て、環境の中のものが左から手前、右へと動く。平行光（`ibl: false`）には効かない |
 | `litObject.samples` | IBL の 1 パスあたりのサンプル数（既定 128） |
 | `litObject.occlusion` | IBL でのモデル自身による遮蔽（UI の「Occlusion」）。`"off"`（なし）、`"sh"`（既定。読み込み時に頂点ごとに事前計算した近似）、`"ray"`（サンプルごとに影のレイを飛ばす正確な判定。重く、収束に時間がかかる）。以前の形式の `true` は `"sh"`、`false` は `"off"` として読む。平行光（`ibl: false`）には効かない |
-| `litObject.modelTextures` | モデルに付属するテクスチャを、表示中の BRDF に自動で貼る（UI の「Model tex」、`ctl-model-tex`、既定 `true`）。今は `dm.obj` だけが持つ（ノーマルマップ、ベースカラー、ラフネス）。貼られた画像は `getState()` の `brdfs[].textures` / `normalMap` に `modelDefault: true` 付きで出る。素のモデルを撮るときは `false` にする。`setTexture` / `--texture` で貼った画像が優先 |
+| `litObject.modelTextures` | モデルに付属するテクスチャを、表示中の BRDF に自動で貼る（UI の「Model tex」、`ctl-model-tex`、既定 `true`）。今は `dm.obj` だけが持つ（ノーマルマップ、ベースカラー、ラフネス、`skintone_callisto_brdf` 用の `ldr_mask` / `hair_mask`）。貼られた画像は `getState()` の `brdfs[].textures` / `normalMap` に `modelDefault: true` 付きで出る。素のモデルを撮るときは `false` にする。`setTexture` / `--texture` で貼った画像が優先 |
 | `litObject.sss` | 疑似 SSS（UI の「SSS」、`data-testid="ctl-sss"`、既定 `true`）。拡散光だけを画面上でぼかす。独自実装・近似。対応する `.brdf`（`BRDF_sss_diffuse` を持つもの。今は `callisto_*`）でだけ効き、ほかでは無視される。値は `.brdf` の `sss_*` パラメータ。[pseudo_sss.md](pseudo_sss.md) |
 | `litObject.glazing` | Specular Glazing Blur（UI の「Glazing」、`ctl-glazing`、既定 `true`）。独自実装・近似。`ibl: true` かつ `occlusion: "ray"` で、`glazing_blur_radius` を持つ `.brdf`（今は `callisto_*`）を表示しているときだけ効く。明暗境界の帯で、スペキュラ用の法線と影を近くの画素から借りる。[glazing_blur.md](glazing_blur.md) |
 | `litObject.sizeCm` | モデルの最大の辺の実寸（cm、UI の「Size (cm)」、`ctl-size-cm`）。疑似 SSS の距離（cm）を画面上の大きさに直すのに使う。`object` を変えると、そのモデルの既定値（`dm.obj` は 30.17、ほかは 20）に戻る。`object` と一緒に書いた場合は、書いた値が優先 |
@@ -150,7 +150,7 @@ rem 共有 URL から、スライスの PNG と数値（CSV）を 1 回で
 capture.bat --url "https://tomosud.github.io/brdf_view/#v=1&brdfs.0.file=callisto_brdf.brdf" --view slice --out slice.png --data slice.csv
 
 rem BRDF とパラメータと光をその場で指定して、複数のビューを撮る（{view} がビュー名に置き換わる）
-capture.bat --brdf callisto_skin_jacob.brdf --set roughness=0.4 --set base_color=0.8,0.6,0.5 --light 60,0 --view litObject,litSphere,polar --out figs/jacob_{view}.png
+capture.bat --brdf callisto_brdf.brdf --set roughness=0.4 --set base_color=0.8,0.6,0.5 --light 60,0 --view litObject,litSphere,polar --out figs/jacob_{view}.png
 
 rem 任意のキーは --opt（URL と同じ書き方）
 capture.bat --brdf callisto_brdf.brdf --opt litObject.object=dm.obj --opt litObject.ibl=false --opt plot.nDotL=true --view litObject --out head.png
@@ -186,7 +186,7 @@ capture.bat --brdf callisto_brdf.brdf --set roughness=0.3 --save-state state.jso
 
 ```json
 {
-  "defaults": { "brdf": "callisto_skin_jacob.brdf", "width": 768, "height": 768,
+  "defaults": { "brdf": "callisto_brdf.brdf", "width": 768, "height": 768,
                 "opt": { "litObject.object": "dm.obj", "litObject.ibl": false, "plot.nDotL": true,
                          "litObject.camera.theta": 90, "litObject.camera.phi": 90, "litObject.hideBackground": true } },
   "jobs": [

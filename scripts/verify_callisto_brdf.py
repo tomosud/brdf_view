@@ -29,8 +29,6 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BRDF_DIR = os.path.join(ROOT, "sample", "brdf")
 PRESETS = [
     "callisto_brdf",
-    "callisto_skin_jacob",
-    "callisto_skin_generic",
     "callisto_eye",
     "callisto_teeth",
     "callisto_cloth_prisoner",

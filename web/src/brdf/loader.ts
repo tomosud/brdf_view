@@ -14,11 +14,10 @@ const CUSTOM_IMPLEMENTATION_LABELS: Readonly<Record<string, string>> = {
   'substrate.brdf': `substrate ${CUSTOM_IMPLEMENTATION_BADGE}`,
   'brdf_slice_guide.brdf': `brdf_slice_guide ${CUSTOM_IMPLEMENTATION_BADGE}`,
   'callisto_brdf.brdf': `callisto_brdf ${CUSTOM_IMPLEMENTATION_BADGE}`,
-  'callisto_skin_jacob.brdf': `callisto_skin_jacob ${CUSTOM_IMPLEMENTATION_BADGE}`,
-  'callisto_skin_generic.brdf': `callisto_skin_generic ${CUSTOM_IMPLEMENTATION_BADGE}`,
   'callisto_eye.brdf': `callisto_eye ${CUSTOM_IMPLEMENTATION_BADGE}`,
   'callisto_teeth.brdf': `callisto_teeth ${CUSTOM_IMPLEMENTATION_BADGE}`,
   'callisto_cloth_prisoner.brdf': `callisto_cloth_prisoner ${CUSTOM_IMPLEMENTATION_BADGE}`,
+  'skintone_callisto_brdf.brdf': `skintone_callisto_brdf ${CUSTOM_IMPLEMENTATION_BADGE}`,
 };
 
 /** User-facing name for bundled samples that distinguishes project-specific implementations. */

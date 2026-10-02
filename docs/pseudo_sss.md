@@ -12,7 +12,7 @@ Last updated: 2026-10-01
 
 ## 使い方
 
-1. 対応する `.brdf` を読み込む（例 `callisto_skin_jacob.brdf`）
+1. 対応する `.brdf` を読み込む（例 `callisto_brdf.brdf`）
 2. Lit Object の `SSS` にチェックが入っていることを確かめる（既定で入っている。比べるときはここで切り替える）
 3. `Size (cm)` に、モデルの最大の辺の実寸を入れる。散乱の距離は cm で決まるので、モデルが大きいほど、画面上の広がりは小さくなる
 4. 左のパネルの `sss_` で始まるパラメータで調整する
@@ -28,10 +28,10 @@ Last updated: 2026-10-01
 
 ```bat
 rem 頭部モデルを、SSS あり・遮蔽のレイトレースありで撮る
-capture.bat --brdf callisto_skin_jacob.brdf --opt litObject.object=dm.obj --opt litObject.occlusion=ray --view litObject --frames 128 --out head_sss.png
+capture.bat --brdf callisto_brdf.brdf --opt litObject.object=dm.obj --opt litObject.occlusion=ray --view litObject --frames 128 --out head_sss.png
 
 rem 球の直径を 3 cm として、平行光で撮る
-capture.bat --brdf callisto_skin_jacob.brdf --light 90,0 --opt litObject.ibl=false --opt plot.nDotL=true --opt litObject.sizeCm=3 --view litObject --out sphere_sss.png
+capture.bat --brdf callisto_brdf.brdf --light 90,0 --opt litObject.ibl=false --opt plot.nDotL=true --opt litObject.sizeCm=3 --view litObject --out sphere_sss.png
 ```
 
 ### 見え方の目安
@@ -193,10 +193,10 @@ python scripts/verify_sss.py
 
 | プリセット | `sss_scatter_radius` | `sss_falloff` | `sss_subsurface` |
 | --- | --- | --- | --- |
-| 顔（`callisto_brdf`、`callisto_skin_jacob`） | 0.5 | (1, 0.25, 0.05) | (1, 1, 1) |
+| 顔（`callisto_brdf`） | 0.5 | (1, 0.25, 0.05) | (1, 1, 1) |
 | 汎用の肌 | 0.6 | (1, 0.25, 0.05) | (1, 1, 1) |
 | 眼 | 0.5 | (1, 0.65, 0.15) | (1, 1, 1) |
 | 歯 | 1.5 | (0.8, 0.5, 0.25) | (1, 1, 1) |
 | 囚人服 | 10 | (1, 0.35, 0) | (0.1, 0.1, 0.1) |
 
-元のプロファイルの ScatterRadius、FalloffColor、SubsurfaceColor です。囚人服は距離が長いかわりに、混ざる割合が 10% です。
+元のプロファイルの ScatterRadius、FalloffColor、SubsurfaceColor です。汎用の肌はファイルを同梱していないので、`callisto_brdf` のパラメータを変えて使います。囚人服は距離が長いかわりに、混ざる割合が 10% です。

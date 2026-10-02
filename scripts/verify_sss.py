@@ -60,10 +60,10 @@ vec3 BRDF(vec3 L, vec3 V, vec3 N, vec3 X, vec3 Y) { return BRDF_sss_diffuse(L, V
 }
 # (label, .brdf, size of the sphere's diameter in cm, parameter overrides)
 CASES = [
-    ("jacob_3cm", "callisto_skin_jacob", 3.0, {}),
-    ("jacob_20cm", "callisto_skin_jacob", 20.0, {}),
-    ("jacob_3cm_half", "callisto_skin_jacob", 3.0, {"sss_strength": 0.5}),
-    ("jacob_3cm_lambert", "callisto_skin_jacob", 3.0, {"advanced_strength": 0.0}),
+    ("jacob_3cm", "callisto_brdf", 3.0, {}),
+    ("jacob_20cm", "callisto_brdf", 20.0, {}),
+    ("jacob_3cm_half", "callisto_brdf", 3.0, {"sss_strength": 0.5}),
+    ("jacob_3cm_lambert", "callisto_brdf", 3.0, {"advanced_strength": 0.0}),
     ("teeth_6cm", "callisto_teeth", 6.0, {}),
     ("cloth_40cm", "callisto_cloth_prisoner", 40.0, {}),
     ("hook_only_6cm", "@lambert_hook_only", 6.0, {}),

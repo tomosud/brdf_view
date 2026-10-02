@@ -103,6 +103,7 @@ capture.bat --batch jobs.json
 - 左のパネルで外したり、別の画像に替えたりすると、そのままになります。モデルを選び直すと、もう一度貼られます
 - 別のモデルに替えると外れます。`Model tex` を外すと、貼らなくなります（状態のキー `litObject.modelTextures`）
 - IndexedDB には保存しません（モデルと一緒に戻るため）
+- `skintone_callisto_brdf` には、肌トーン用の LDR マスク（`ldr_mask`）と髪マスク（`hair_mask`）も貼ります（可逆 WebP）
 - 別のモデルにテクスチャを付けるには、`assets/obj/textures.json` に項目を足し、画像を `assets/obj/textures/` に置きます
 
 ## 疑似 SSS（Lit Object）
@@ -114,7 +115,7 @@ Lit Object の `SSS`（既定オン）は、拡散光だけを画面上でぼか
 - 調整は `sss_` で始まるパラメータ（強さ、届く距離、色ごとの広がり、混ぜる割合）
 - 効くのは mm 単位の陰影（ノーマルマップの凹凸、鼻・唇・耳の際、影の縁）です。肌の値では、頭の大きさの球の明暗境界はほとんど変わりません。影の縁を見るなら `IBL` オン + `Occlusion` = `Ray`
 - プロット、Image Slice、Lit Sphere、`evaluate()` には入りません
-- 状態のキーは `litObject.sss`（真偽、既定 `true`）と `litObject.sizeCm`。SSS なし・テクスチャなしの素のモデルを撮る例: `capture.bat --brdf callisto_skin_jacob.brdf --opt litObject.object=dm.obj --opt litObject.sss=false --opt litObject.modelTextures=false --view litObject --out head.png`
+- 状態のキーは `litObject.sss`（真偽、既定 `true`）と `litObject.sizeCm`。SSS なし・テクスチャなしの素のモデルを撮る例: `capture.bat --brdf callisto_brdf.brdf --opt litObject.object=dm.obj --opt litObject.sss=false --opt litObject.modelTextures=false --view litObject --out head.png`
 
 ## Specular Glazing Blur（Lit Object）
 
@@ -148,7 +149,8 @@ float roughness 0.02 1.0 0.5  # ラフネス（下限 0.02） / roughness (clamp
 | `sample/brdf/substrate.brdf` | **独自実装**。Unreal Substrate Slab のローカルdirect lighting近似です。画面上の `second_roughness_as_clearcoat（custom）` は元実装にない独自拡張です。 |
 | `sample/brdf/callisto_brdf.brdf` | **独自実装・近似**。The Callisto Protocol の Callisto BRDF（UE4 SubsurfaceProfile 拡張）を、出荷データとGPUキャプチャから再構成したローカルBRDFです。Dual Normal・透過は含みません。SSS と Specular Glazing Blur は BRDF には含まず、Lit Object の疑似 SSS と Glazing（上の節。どちらも独自実装・近似、既定はオン）で足されます。詳細は [callisto_brdf reproduction status](docs/callisto_brdf_reproduction.md)。 |
 | `sample/brdf/brdf_slice_guide.brdf` | **独自の説明用（物理的な BRDF ではない）**。Image Slice（横 θh・縦 θd）のどの領域が何を表すかを色分けで示します。白 = スペキュラのピーク（左端）、マゼンタ = グレージングのフレネル（左上）、赤 = 再帰反射（右下）、黄 = カメラと同じ方向からの照明（下端、L ≒ V）、青 = 光が地平線付近（N·L→0）、シアン = 視線が地平線付近（N·V→0）、暗赤 = 地平線より下（本来は 0）。領域ごとに `show_*`（表示の切り替え）と `*_color`（色見本＝凡例。変えても Defaults で戻る）を持ちます。 |
-| `sample/brdf/callisto_skin_jacob.brdf` ほか `callisto_skin_generic` / `callisto_eye` / `callisto_teeth` / `callisto_cloth_prisoner` | **派生プリセット**。`callisto_brdf.brdf` と同じシェーダで、初期値だけを素材ごとの出荷値にしたもの。`scripts/gen_callisto_presets.py` で生成（手で編集しない）。将来はビューアのプリセット機能に置き換える予定です。 |
+| `sample/brdf/callisto_eye.brdf` / `callisto_teeth` / `callisto_cloth_prisoner` | **派生プリセット**。`callisto_brdf.brdf` と同じシェーダで、初期値だけを素材ごとの出荷値にしたもの。肌（Jacob の顔）は `callisto_brdf.brdf` の初期値そのものです。`scripts/gen_callisto_presets.py` で生成（手で編集しない）。将来はビューアのプリセット機能に置き換える予定です。 |
+| `sample/brdf/skintone_callisto_brdf.brdf` | **独自実装・派生**。ライティングは `callisto_brdf.brdf` と同じで、ベースカラーだけを肌トーンチャート（110 列、`skintone` で選ぶ）＋LDR マスク＋髪マスクから作ります（UE のマテリアルグラフに合わせたもの）。チャートの値は定数として埋め込み済み。`scripts/gen_skintone_callisto.py` で生成（手で編集しない）、`scripts/verify_skintone_brdf.py` で検証。Lit Object の `dm` では 3 枚のテクスチャが最初から貼られます。 |
 
 アプリ内では `disney`、`unreal_legacy_pbr`、`openpbr`、`substrate`、`callisto_brdf`（派生プリセットを含む）の名前にも
 `[custom implementation / 独自実装]` を付けて表示します。

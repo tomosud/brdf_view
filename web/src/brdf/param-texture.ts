@@ -23,9 +23,12 @@ function newImageId(): string {
     : `img-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-/** Default encoding of an image dropped on a parameter: base color is sRGB, everything else linear. */
+/**
+ * Default encoding of an image dropped on a parameter: base color is sRGB, everything else linear.
+ * ldr_mask (skintone_callisto_brdf) is a gamma-space colour used as is, so it is "sRGB" too.
+ */
 export function defaultColorSpace(name: string): TextureColorSpace {
-  return /base_?colou?r|albedo/i.test(name) ? 'srgb' : 'linear';
+  return /base_?colou?r|albedo|ldr_?mask/i.test(name) ? 'srgb' : 'linear';
 }
 
 /** Default channel: RGB for color parameters, R for float parameters. */
