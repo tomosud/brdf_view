@@ -41,6 +41,14 @@ https://rgl.epfl.ch/materials
 
 ツールバーの `HDR`（既定オフ）をオンにすると、同じ 3 つのビューを HDR で表示します（Chrome 系のブラウザ、Windows の「HDR を使用する」がオンの HDR モニター）。画面の 1.0 を SDR の白（203 nits、ITU-R BT.2408）として、それより明るい値をそのまま出します。`Tone map` もオンなら ACES 2.0 の HDR 版（1000 nits、P3-D65。OpenColorIO の「Display P3 HDR - Display」/「ACES 2.0 - HDR 1000 nits (P3 D65)」と同じ計算で、1.0 を 203 nits に合わせたもの）、オフなら今の表示から 1 での切り捨てを外しただけのものになります。HDR 表示でないモニターに移すと自動で SDR に戻ります。撮影（PNG、`render()`、`capture.bat`）は常に SDR です。
 
+`Lit Object` では、マウスを乗せた画素の値を左上に表示します。
+- `pre`：tonemap 前のリニアな値（Rec.709、`Exposure` を掛ける前）と輝度 Y
+- `post`：tonemap 後の値（`Exposure`、`Tone map` または `Gamma`、符号化を通した、画面に出す値そのもの）
+
+下の `EXR` の `Pre tonemap` / `Post tonemap` ボタンで、今の表示を OpenEXR（RGB、32 bit float、ZIP 圧縮、画面と同じ解像度）で保存できます。積算中なら、その時点の平均を保存します。
+- 疑似 SSS がオンのときは、SSS を合成した後の値です（半精度の中間バッファを通るため、有効桁は約 3 桁）
+- `post` は画面に出す値なので、SDR では 0〜1 に切り詰められています。HDR 表示中は 1 を超える値も残ります
+
 `ALBEDO` view は廃止しました。Monte Carlo 積分を含む巨大 shader が通常
 `.brdf` の初回 compile を重くしていたため、現在の Cartesian plot は
 `Theta V / Theta H / Theta D` のみです。

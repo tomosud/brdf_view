@@ -265,6 +265,24 @@ html, body {
 }
 .view-controls:empty { display: none; }
 .view-controls .ctl-row { grid-template-columns: 80px 1fr; margin: 2px 0; }
+.pixel-readout {
+  position: absolute;
+  top: 28px;
+  left: 8px;
+  padding: 3px 6px;
+  color: #eee;
+  background: rgb(0 0 0 / 68%);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 4px;
+  font: 11px/1.35 ui-monospace, Consolas, monospace;
+  white-space: pre;
+  pointer-events: none;
+}
+.pixel-readout[hidden] { display: none; }
+.exr-buttons {
+  display: flex;
+  gap: 4px;
+}
 .view-legend {
   position: absolute;
   top: 28px;

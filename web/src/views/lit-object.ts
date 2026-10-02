@@ -3,6 +3,8 @@
 // environment background. Modes: "No IBL" (directional light) and "IBL"
 // (cosine-weighted Monte-Carlo). Importance sampling (IBL IS/MIS) is future work.
 // Left-drag orbits, right-drag zooms, double-click resets.
+// The pixel under the mouse is shown before and after the display transform
+// (pixel readout), and both images can be saved as OpenEXR (EXR buttons).
 // "No IBL" lights the object with one directional light from the incident angle
 // (store incidentTheta/Phi, z-up like the other views) instead of the HDRI.
 
@@ -22,6 +24,7 @@ import { GLAZING_GBUFFER_DEFINES, GlazingGBuffer, glazingDefines, glazingSupport
 import { ModelTextures } from './model-textures.js';
 import { boolControl, floatControl, selectControl } from '../ui/controls.js';
 import { parseHdr } from '../io/hdr.js';
+import { encodeExr } from '../io/exr.js';
 import type { HdrImage } from '../io/hdr.js';
 import type { Store } from '../state/store.js';
 
@@ -113,6 +116,15 @@ export class LitObjectView extends BaseView {
   private accumRead = 0;
   private accumFrame = 0;
   private floatRenderTargets = false;
+  /** The linear image last drawn to the canvas (input of the display transform). */
+  private presented: { texture: WebGLTexture; width: number; height: number } | null = null;
+  /** Display transform output in float, for the readout and the EXR export. */
+  private displayTarget: RenderTarget | null = null;
+  private readFramebuffer: WebGLFramebuffer | null = null;
+  /** Mouse position in canvas pixels (GL convention, y up); null when not over the canvas. */
+  private hoverPixel: { x: number; y: number } | null = null;
+  private pixelReadout!: HTMLElement;
+  private lastReadoutTime = 0;
   private resetUnsub: (() => void) | null = null;
 
   private lookTheta = 1.2;
@@ -200,6 +212,12 @@ export class LitObjectView extends BaseView {
       program: displayProgram,
       u: new Uniforms(gl, displayProgram),
     };
+
+    this.pixelReadout = document.createElement('div');
+    this.pixelReadout.className = 'pixel-readout';
+    this.pixelReadout.dataset.testid = 'pixel-readout';
+    this.pixelReadout.hidden = true;
+    this.root.append(this.pixelReadout);
 
     this.buildControls();
     this.setupInteraction();
@@ -832,6 +850,100 @@ export class LitObjectView extends BaseView {
 
   private drawTextureToScreen(texture: WebGLTexture, w: number, h: number): void {
     this.drawDisplay(texture, null, w, h);
+    this.presented = { texture, width: w, height: h };
+    if (this.hoverPixel) this.updatePixelReadout(false);
+  }
+
+  // ---- pixel readout and EXR export ----
+
+  /** Read a rectangle of the presented linear image (before exposure and the display transform). */
+  private readLinear(x: number, y: number, w: number, h: number): Float32Array {
+    return this.readTexture(this.presented!.texture, x, y, w, h);
+  }
+
+  /** Read a rectangle of the display transform output, as drawn to the canvas (exposure, tone map / gamma, encoding, limit). */
+  private readDisplayed(x: number, y: number, w: number, h: number): Float32Array {
+    const gl = this.gl;
+    const p = this.presented!;
+    if (this.displayTarget?.width !== p.width || this.displayTarget.height !== p.height) {
+      this.disposeTarget(this.displayTarget);
+      this.displayTarget = createRenderTarget(gl, p.width, p.height, this.floatRenderTargets ? 'float' : 'byte', false);
+    }
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(x, y, w, h);
+    this.drawDisplay(p.texture, this.displayTarget.framebuffer, p.width, p.height);
+    gl.disable(gl.SCISSOR_TEST);
+    return this.readTexture(this.displayTarget.texture, x, y, w, h);
+  }
+
+  /** RGBA floats, rows bottom to top (GL order). Without float render targets the values are 8-bit / 255. */
+  private readTexture(texture: WebGLTexture, x: number, y: number, w: number, h: number): Float32Array {
+    const gl = this.gl;
+    this.readFramebuffer ??= gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.readFramebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    let out: Float32Array;
+    if (this.floatRenderTargets) {
+      out = new Float32Array(w * h * 4);
+      gl.readPixels(x, y, w, h, gl.RGBA, gl.FLOAT, out);
+    } else {
+      const bytes = new Uint8Array(w * h * 4);
+      gl.readPixels(x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+      out = Float32Array.from(bytes, (v) => v / 255);
+    }
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, null, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return out;
+  }
+
+  /** Show the values under the mouse. While the image is still accumulating, at most every 100 ms. */
+  private updatePixelReadout(force: boolean): void {
+    const el = this.pixelReadout;
+    const p = this.presented;
+    const hp = this.hoverPixel;
+    if (!hp || !p || hp.x >= p.width || hp.y >= p.height) {
+      el.hidden = true;
+      return;
+    }
+    const now = performance.now();
+    if (!force && now - this.lastReadoutTime < 100) return;
+    this.lastReadoutTime = now;
+    const lin = this.readLinear(hp.x, hp.y, 1, 1);
+    const disp = this.readDisplayed(hp.x, hp.y, 1, 1);
+    const f = (v: number) => (v !== 0 && (Math.abs(v) >= 1e4 || Math.abs(v) < 1e-3) ? v.toExponential(3) : v.toFixed(4));
+    const rgb = (a: Float32Array) => `${f(a[0])}  ${f(a[1])}  ${f(a[2])}`;
+    const lum = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+    el.textContent =
+      `x ${hp.x}  y ${p.height - 1 - hp.y}
+` +
+      `pre   ${rgb(lin)}  (Y ${f(lum)})
+` +
+      `post  ${rgb(disp)}`;
+    el.hidden = false;
+  }
+
+  /** Save the presented image before ('linear') or after ('display') the display transform as OpenEXR. */
+  async exportExr(kind: 'linear' | 'display'): Promise<void> {
+    const p = this.presented;
+    if (!p) return;
+    const { width: w, height: h } = p;
+    const data = kind === 'linear' ? this.readLinear(0, 0, w, h) : this.readDisplayed(0, 0, w, h);
+    // GL rows are bottom to top; EXR rows top to bottom.
+    const rows = new Float32Array(data.length);
+    for (let y = 0; y < h; y++) rows.set(data.subarray((h - 1 - y) * w * 4, (h - y) * w * 4), y * w * 4);
+    const blob = await encodeExr(w, h, rows);
+    const name = (this.store.topmostEnabled()?.instance.def.name ?? 'lit_object')
+      .replace(/\s*\[.*\]\s*$/, '')
+      .replace(/\.brdf$/i, '')
+      .replace(/[^\w.-]+/g, '_');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${name}_${kind === 'linear' ? 'pre_tonemap' : 'post_tonemap'}.exr`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 
   /** Draw a linear texture with exposure / gamma / tone map into `framebuffer` (null = the canvas). */
@@ -1195,6 +1307,7 @@ export class LitObjectView extends BaseView {
         this.exposure = v;
         this.requestRender();
       }),
+      this.buildExrRow(),
     );
     this.syncToneMapControls();
     this.syncSssControls();
@@ -1215,6 +1328,51 @@ export class LitObjectView extends BaseView {
       for (const input of glazingRow.querySelectorAll('input')) input.disabled = !glazingAvailable;
       glazingRow.classList.toggle('ctl-disabled', !glazingAvailable);
     }
+  }
+
+  /** Buttons that save the current image before / after the display transform as OpenEXR. */
+  private buildExrRow(): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'ctl-row';
+    row.dataset.testid = 'ctl-exr';
+    const label = document.createElement('span');
+    label.className = 'ctl-label';
+    label.textContent = 'EXR';
+    const buttons = document.createElement('div');
+    buttons.className = 'exr-buttons';
+    const button = (text: string, testid: string, kind: 'linear' | 'display', title: string) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn btn-compact';
+      b.textContent = text;
+      b.dataset.testid = testid;
+      b.title = title;
+      b.addEventListener('click', () => {
+        b.disabled = true;
+        this.exportExr(kind)
+          .catch((e) => console.warn('[brdfView] EXR export', e))
+          .finally(() => (b.disabled = false));
+      });
+      return b;
+    };
+    buttons.append(
+      button(
+        'Pre tonemap',
+        'exr-pre-tonemap',
+        'linear',
+        '今の表示を tonemap 前のリニアな値（露出を掛ける前、Rec.709）で OpenEXR に保存する。積算中なら、その時点の平均 / ' +
+          'Save the current image as OpenEXR with the linear values before the display transform (before exposure, Rec.709). While accumulating, the average so far.',
+      ),
+      button(
+        'Post tonemap',
+        'exr-post-tonemap',
+        'display',
+        '今の表示を tonemap 後の値（露出・Tone map または Gamma・エンコード後、画面に出す値そのもの）で OpenEXR に保存する。HDR 表示では 1 を超える値も残る / ' +
+          'Save the current image as OpenEXR with the values after the display transform (exposure, tone map or gamma, encoding: the values sent to the screen). In HDR output, values above 1 are kept.',
+      ),
+    );
+    row.append(label, buttons);
+    return row;
   }
 
   private buildEnvironmentSelect(): HTMLElement {
@@ -1404,6 +1562,7 @@ export class LitObjectView extends BaseView {
     c.addEventListener('contextmenu', (e) => e.preventDefault());
     c.addEventListener('pointerdown', (e) => {
       button = e.button;
+      setHover(null);
       lastX = e.clientX;
       lastY = e.clientY;
       c.setPointerCapture(e.pointerId);
@@ -1417,8 +1576,23 @@ export class LitObjectView extends BaseView {
         if (this.occlusion === 'ray') this.resetAccumulation();
       }
     });
+    const setHover = (e: PointerEvent | null) => {
+      if (!e || button >= 0) {
+        this.hoverPixel = null;
+      } else {
+        const r = c.getBoundingClientRect();
+        const x = Math.floor(((e.clientX - r.left) / r.width) * c.width);
+        const y = Math.floor(((e.clientY - r.top) / r.height) * c.height);
+        this.hoverPixel = x >= 0 && y >= 0 && x < c.width && y < c.height ? { x, y: c.height - 1 - y } : null;
+      }
+      this.updatePixelReadout(true);
+    };
+    c.addEventListener('pointerleave', () => setHover(null));
     c.addEventListener('pointermove', (e) => {
-      if (button < 0) return;
+      if (button < 0) {
+        setHover(e);
+        return;
+      }
       const dx = e.clientX - lastX;
       const dy = e.clientY - lastY;
       lastX = e.clientX;
